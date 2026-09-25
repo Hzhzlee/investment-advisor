@@ -1,0 +1,852 @@
+/**
+ * ETF Horizon - Singapore Goal-Based Asset Allocation Illustrator
+ * Extends the institutional ETF horizon engine into a goal-based asset allocation
+ * illustrator for basic investors in Singapore.
+ * 
+ * Front-end operates strictly as a Model Context Protocol (MCP) client communicating with /api/mcp.
+ */
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Header } from './components/Header';
+import { GoalPlanner, SINGAPORE_GOAL_PRESETS, GoalPreset } from './components/GoalPlanner';
+import { AssetBuildingBlocks } from './components/AssetBuildingBlocks';
+import { AllocationMixCard } from './components/AllocationMixCard';
+import { GoalTrajectoryChart } from './components/GoalTrajectoryChart';
+import { CustomAllocationEditor } from './components/CustomAllocationEditor';
+import { Controls } from './components/Controls';
+import { KpiCards } from './components/KpiCards';
+import { BenchmarkComparisonChart } from './components/BenchmarkComparisonChart';
+import { SummaryTable } from './components/SummaryTable';
+import { McpActivityPanel } from './components/McpActivityPanel';
+import { CsvUploadModal } from './components/CsvUploadModal';
+import { Footer } from './components/Footer';
+import { mcpClient } from './services/mcpClient';
+import { BENCHMARKS, parseCSVToPrices } from './data/benchmarks';
+import {
+  PricePoint,
+  MetricResults,
+  ScenarioResult,
+  MonteCarloResult,
+  AssetClassKey,
+  AssetClassConfig,
+  MixAnalyticsState,
+} from './types';
+import {
+  AlertTriangle,
+  UploadCloud,
+  CheckCircle,
+  Database,
+  Layers,
+  Sparkles,
+  RefreshCw,
+  Info,
+} from 'lucide-react';
+
+const DEFAULT_ASSET_CONFIGS: Record<AssetClassKey, AssetClassConfig> = {
+  cash: {
+    key: 'cash',
+    name: 'Cash / Fixed Deposit',
+    shortName: 'Cash',
+    isFixedRate: true,
+    defaultFixedRate: 0.020,
+    fixedRate: 0.020,
+    defaultProxy: 'Cash',
+    currentProxy: 'Cash',
+    assumptionNote: 'Assumed rate to update — reflects prevailing Singapore bank fixed deposits / high-yield savings (default 2.0%).',
+    description: 'Ultra-liquid capital buffer with zero market risk and predictable nominal interest.',
+    color: '#10b981',
+    category: 'Cash & Sovereign'
+  },
+  gov_backed: {
+    key: 'gov_backed',
+    name: 'Gov-Backed (T-Bills / SSB)',
+    shortName: 'SSB/T-Bills',
+    isFixedRate: true,
+    defaultFixedRate: 0.028,
+    fixedRate: 0.028,
+    defaultProxy: 'SSB/T-Bills',
+    currentProxy: 'SSB/T-Bills',
+    assumptionNote: 'Assumed rate to update — reflects prevailing MAS Singapore 6-month T-bill / 10-year SSB coupon (default 2.8%).',
+    description: 'Singapore Government-backed sovereign debt with highest AAA credit rating and capital safety.',
+    color: '#0ea5e9',
+    category: 'Cash & Sovereign'
+  },
+  bonds: {
+    key: 'bonds',
+    name: 'Global / US Aggregate Bonds',
+    shortName: 'Bonds',
+    isFixedRate: false,
+    defaultProxy: 'AGG',
+    currentProxy: 'AGG',
+    description: 'Investment-grade fixed income providing coupon income and equity crash cushion.',
+    color: '#6366f1',
+    category: 'Fixed Income'
+  },
+  global_equity: {
+    key: 'global_equity',
+    name: 'Global Equities',
+    shortName: 'Global Eq',
+    isFixedRate: false,
+    defaultProxy: 'VT',
+    currentProxy: 'VT',
+    description: 'Broad worldwide stock market exposure across 9,000+ companies in 40+ countries.',
+    color: '#3b82f6',
+    category: 'Equities'
+  },
+  sg_equity: {
+    key: 'sg_equity',
+    name: 'Singapore Equities (STI)',
+    shortName: 'SG Equity',
+    isFixedRate: false,
+    defaultProxy: 'ES3.SI',
+    currentProxy: 'ES3.SI',
+    description: 'Top 30 blue-chip companies on the SGX (DBS, OCBC, Singtel) with strong dividend yields.',
+    color: '#f43f5e',
+    category: 'Equities'
+  },
+  reits: {
+    key: 'reits',
+    name: 'Real Estate / REITs',
+    shortName: 'REITs',
+    isFixedRate: false,
+    defaultProxy: 'VNQ',
+    currentProxy: 'VNQ',
+    description: 'Income-generating real estate investment trusts offering inflation-linked dividend streams.',
+    color: '#f59e0b',
+    category: 'Real Assets'
+  },
+  gold: {
+    key: 'gold',
+    name: 'Physical Gold',
+    shortName: 'Gold',
+    isFixedRate: false,
+    defaultProxy: 'GLD',
+    currentProxy: 'GLD',
+    description: 'Physical gold bullion acting as non-correlated crisis insurance and currency debasement hedge.',
+    color: '#eab308',
+    category: 'Real Assets'
+  }
+};
+
+export default function App() {
+  // Navigation View Mode: Goal Allocation Illustrator vs Preserved Single ETF Deep Dive
+  const [viewMode, setViewMode] = useState<'goal_allocation' | 'single_etf'>('goal_allocation');
+
+  // Base Currency Display
+  const [currency, setCurrency] = useState<'SGD' | 'USD'>('SGD');
+
+  // 1. Goal Parameters
+  const [selectedPresetId, setSelectedPresetId] = useState<string>('retirement');
+  const [targetAmount, setTargetAmount] = useState<number>(600000);
+  const [years, setYears] = useState<number>(15);
+  const [startValue, setStartValue] = useState<number>(30000);
+  const [monthlyContribution, setMonthlyContribution] = useState<number>(1200);
+  const [riskLevel, setRiskLevel] = useState<number>(3);
+  const [inflation, setInflation] = useState<number>(0.025); // default 2.5% Singapore MAS baseline
+  const [feeDrag, setFeeDrag] = useState<number>(0.002); // default 0.20% expense drag
+  const [isRealTerms, setIsRealTerms] = useState<boolean>(false);
+
+  // 2. Asset Building Blocks & Proxies
+  const [assetConfigs, setAssetConfigs] = useState<Record<AssetClassKey, AssetClassConfig>>(DEFAULT_ASSET_CONFIGS);
+
+  // 3. Illustrative Mix Analytics & Custom Allocation
+  const [mixStates, setMixStates] = useState<MixAnalyticsState[]>([]);
+  const [customWeights, setCustomWeights] = useState<Record<AssetClassKey, number>>({
+    cash: 0.10,
+    gov_backed: 0.15,
+    bonds: 0.20,
+    global_equity: 0.30,
+    sg_equity: 0.15,
+    reits: 0.05,
+    gold: 0.05
+  });
+  const [customMixState, setCustomMixState] = useState<MixAnalyticsState | null>(null);
+  const [activeChartMixId, setActiveChartMixId] = useState<string>('mix_1');
+
+  // 4. Preserved Single ETF State
+  const [singleTicker, setSingleTicker] = useState('ES3.SI');
+  const [singleYears, setSingleYears] = useState(10);
+  const [singleInitial, setSingleInitial] = useState(10000);
+  const [singleMonthly, setSingleMonthly] = useState(500);
+  const [singleCagrAdj, setSingleCagrAdj] = useState(0);
+  const [singlePrices, setSinglePrices] = useState<PricePoint[]>([]);
+  const [singleMetrics, setSingleMetrics] = useState<MetricResults | null>(null);
+  const [singleScenarios, setSingleScenarios] = useState<ScenarioResult[]>([]);
+  const [singleMonteCarlo, setSingleMonteCarlo] = useState<MonteCarloResult | null>(null);
+
+  // Global App States
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isSimulatingCustom, setIsSimulatingCustom] = useState<boolean>(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [mcpStatus, setMcpStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
+  const [dataSource, setDataSource] = useState<'api' | 'csv' | 'benchmark'>('api');
+  const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
+
+  const mcpConsoleRef = useRef<HTMLDivElement>(null);
+
+  // Initialize MCP connection on app load
+  useEffect(() => {
+    async function initMcp() {
+      try {
+        await mcpClient.initialize();
+        await mcpClient.listTools();
+        setMcpStatus('connected');
+      } catch (err) {
+        console.error('Failed to initialize MCP client:', err);
+        setMcpStatus('error');
+      }
+    }
+    initMcp();
+  }, []);
+
+  /**
+   * Run Goal Analytics Pipeline:
+   * 1. Calls suggest_mixes(riskLevel, years)
+   * 2. For each mix, calls build_blended_series, simulate_goal, solve_required_contribution
+   * 3. Runs the same toolchain for the custom mix
+   */
+  const runGoalAnalyticsPipeline = useCallback(async () => {
+    setIsLoading(true);
+    setErrorMessage(null);
+
+    try {
+      // 1. MCP suggest_mixes tool
+      const suggested = await mcpClient.suggestMixes(riskLevel, years);
+      const mixes = suggested?.mixes || [];
+
+      const processedMixes: MixAnalyticsState[] = [];
+
+      for (let i = 0; i < mixes.length; i++) {
+        const sm = mixes[i];
+        const weightsRecord: Record<AssetClassKey, number> = {
+          cash: 0,
+          gov_backed: 0,
+          bonds: 0,
+          global_equity: 0,
+          sg_equity: 0,
+          reits: 0,
+          gold: 0
+        };
+
+        const componentsPayload = sm.components.map(comp => {
+          const key = comp.asset_class as AssetClassKey;
+          weightsRecord[key] = comp.weight;
+          const cfg = assetConfigs[key] || DEFAULT_ASSET_CONFIGS[key];
+
+          if (cfg.isFixedRate) {
+            return {
+              asset_class: key,
+              fixed_rate: cfg.fixedRate ?? 0.02,
+              weight: comp.weight
+            };
+          } else {
+            return {
+              asset_class: key,
+              ticker: cfg.currentProxy,
+              weight: comp.weight
+            };
+          }
+        });
+
+        // 2. MCP build_blended_series tool
+        const blended = await mcpClient.buildBlendedSeries(componentsPayload, years, 'annual');
+        const returnsList = blended.monthly_returns.map(m => m.return);
+
+        // 3. MCP simulate_goal tool (6-month block bootstrap)
+        const sim = await mcpClient.simulateGoal(
+          returnsList,
+          startValue,
+          monthlyContribution,
+          years,
+          targetAmount,
+          1000,
+          inflation,
+          feeDrag
+        );
+
+        // 4. MCP solve_required_contribution tool (bisection solver)
+        const req = await mcpClient.solveRequiredContribution(
+          returnsList,
+          startValue,
+          years,
+          targetAmount,
+          0.80,
+          inflation,
+          isRealTerms,
+          feeDrag
+        );
+
+        processedMixes.push({
+          mixId: `mix_${i + 1}`,
+          mixName: sm.name,
+          mixLabel: sm.label,
+          description: sm.description,
+          rationale: sm.rationale,
+          riskRating: sm.risk_rating,
+          weights: weightsRecord,
+          blendedSeries: blended,
+          simulation: sim,
+          requiredContribution: req,
+          isLoading: false
+        });
+      }
+
+      setMixStates(processedMixes);
+
+      // Process Custom Mix
+      const customPayload = (Object.keys(customWeights) as AssetClassKey[])
+        .filter(k => customWeights[k] > 0)
+        .map(key => {
+          const cfg = assetConfigs[key] || DEFAULT_ASSET_CONFIGS[key];
+          if (cfg.isFixedRate) {
+            return {
+              asset_class: key,
+              fixed_rate: cfg.fixedRate ?? 0.02,
+              weight: customWeights[key]
+            };
+          } else {
+            return {
+              asset_class: key,
+              ticker: cfg.currentProxy,
+              weight: customWeights[key]
+            };
+          }
+        });
+
+      if (customPayload.length > 0) {
+        const customBlended = await mcpClient.buildBlendedSeries(customPayload, years, 'annual');
+        const customReturns = customBlended.monthly_returns.map(m => m.return);
+
+        const customSim = await mcpClient.simulateGoal(
+          customReturns,
+          startValue,
+          monthlyContribution,
+          years,
+          targetAmount,
+          1000,
+          inflation,
+          feeDrag
+        );
+
+        const customReq = await mcpClient.solveRequiredContribution(
+          customReturns,
+          startValue,
+          years,
+          targetAmount,
+          0.80,
+          inflation,
+          isRealTerms,
+          feeDrag
+        );
+
+        setCustomMixState({
+          mixId: 'custom',
+          mixName: 'Custom Mix Allocation',
+          mixLabel: 'Bespoke Blend',
+          description: 'Your user-customized asset class distribution.',
+          rationale: 'Individually weighted to match personal return and risk preferences.',
+          riskRating: 'Custom',
+          weights: { ...customWeights },
+          blendedSeries: customBlended,
+          simulation: customSim,
+          requiredContribution: customReq,
+          isLoading: false
+        });
+      }
+    } catch (err: any) {
+      console.error('Goal analytics pipeline error:', err);
+      setErrorMessage(err?.message || 'Goal simulation toolchain encountered an issue.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [
+    riskLevel,
+    years,
+    assetConfigs,
+    startValue,
+    monthlyContribution,
+    targetAmount,
+    inflation,
+    feeDrag,
+    isRealTerms,
+    customWeights
+  ]);
+
+  // Re-run goal pipeline when parameters change
+  useEffect(() => {
+    if (viewMode === 'goal_allocation') {
+      runGoalAnalyticsPipeline();
+    }
+  }, [
+    runGoalAnalyticsPipeline,
+    viewMode
+  ]);
+
+  // Preserved Single ETF Pipeline
+  const runSingleEtfPipeline = useCallback(
+    async (priceSeries: PricePoint[], baseTicker: string) => {
+      try {
+        setIsLoading(true);
+        const metricsRes = await mcpClient.computeMetrics(priceSeries);
+        setSingleMetrics(metricsRes);
+
+        const effectiveBaseCagr = metricsRes.cagr * (1 + singleCagrAdj);
+        const scenariosRes = await mcpClient.projectScenarios(
+          singleInitial,
+          effectiveBaseCagr,
+          singleYears,
+          singleMonthly,
+          feeDrag
+        );
+        setSingleScenarios(scenariosRes);
+
+        const mcRes = await mcpClient.monteCarlo(
+          priceSeries,
+          singleInitial,
+          singleYears,
+          singleMonthly,
+          1000,
+          feeDrag
+        );
+        setSingleMonteCarlo(mcRes);
+        setErrorMessage(null);
+      } catch (err: any) {
+        console.error('Single ETF toolchain error:', err);
+        setErrorMessage(err?.message || 'Analytics pipeline encountered an error.');
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [singleInitial, singleMonthly, singleCagrAdj, singleYears, feeDrag]
+  );
+
+  const fetchSingleTickerData = useCallback(
+    async (targetTicker: string, historyYears: number) => {
+      setIsLoading(true);
+      setErrorMessage(null);
+
+      try {
+        const result = await mcpClient.getPriceHistory(targetTicker, historyYears);
+        if (result && Array.isArray(result.prices) && result.prices.length > 0) {
+          setSinglePrices(result.prices);
+          setDataSource('api');
+          if (result.currency?.toUpperCase() === 'SGD' || targetTicker.toUpperCase().endsWith('.SI')) {
+            setCurrency('SGD');
+          } else {
+            setCurrency('USD');
+          }
+          await runSingleEtfPipeline(result.prices, targetTicker);
+          return;
+        }
+        throw new Error(`Empty price dataset returned for ${targetTicker}.`);
+      } catch (err: any) {
+        const errorText = err?.message || String(err);
+        console.warn('get_price_history notice:', errorText);
+
+        const benchmark = BENCHMARKS[targetTicker.toUpperCase()];
+        if (benchmark) {
+          const parsed = parseCSVToPrices(benchmark.csvData);
+          const targetMonths = historyYears * 12;
+          const sliced = parsed.slice(-targetMonths);
+          setSinglePrices(sliced);
+          setDataSource('benchmark');
+          if (benchmark.currency === 'SGD' || targetTicker.toUpperCase().endsWith('.SI')) {
+            setCurrency('SGD');
+          } else {
+            setCurrency('USD');
+          }
+          setErrorMessage(
+            `Notice: ${errorText}. Using verified total return historical series for ${targetTicker}.`
+          );
+          await runSingleEtfPipeline(sliced, targetTicker);
+        } else {
+          setErrorMessage(
+            `Unable to retrieve market series for "${targetTicker}": ${errorText}. Please try another ticker or upload a CSV.`
+          );
+          setIsLoading(false);
+        }
+      }
+    },
+    [runSingleEtfPipeline]
+  );
+
+  useEffect(() => {
+    if (viewMode === 'single_etf') {
+      fetchSingleTickerData(singleTicker, singleYears);
+    }
+  }, [singleTicker, singleYears, viewMode, fetchSingleTickerData]);
+
+  // Handlers for Goal Presets
+  const handleSelectPreset = (preset: GoalPreset) => {
+    setSelectedPresetId(preset.id);
+    setTargetAmount(preset.defaultTarget);
+    setYears(preset.defaultYears);
+    setStartValue(preset.defaultStart);
+    setMonthlyContribution(preset.defaultMonthly);
+    setRiskLevel(preset.defaultRisk);
+  };
+
+  // Handlers for Building Blocks Updates
+  const handleUpdateAssetRate = (key: AssetClassKey, rate: number) => {
+    setAssetConfigs(prev => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        fixedRate: rate
+      }
+    }));
+  };
+
+  const handleUpdateAssetProxy = (key: AssetClassKey, ticker: string) => {
+    setAssetConfigs(prev => ({
+      ...prev,
+      [key]: {
+        ...prev[key],
+        currentProxy: ticker
+      }
+    }));
+  };
+
+  // Handlers for Custom Weights
+  const handleCustomWeightChange = (key: AssetClassKey, newWeight: number) => {
+    setCustomWeights(prev => ({
+      ...prev,
+      [key]: newWeight
+    }));
+  };
+
+  const handleNormalizeCustomWeights = () => {
+    const total = Object.values(customWeights).reduce((a, b) => a + b, 0);
+    if (total <= 0) return;
+    const normalized: Record<AssetClassKey, number> = {} as any;
+    for (const k of Object.keys(customWeights) as AssetClassKey[]) {
+      normalized[k] = Math.round((customWeights[k] / total) * 100) / 100;
+    }
+    setCustomWeights(normalized);
+  };
+
+  const handleApplyPresetWeights = (preset: 'balanced' | 'all_weather' | 'growth') => {
+    if (preset === 'balanced') {
+      setCustomWeights({
+        cash: 0.10,
+        gov_backed: 0.15,
+        bonds: 0.20,
+        global_equity: 0.30,
+        sg_equity: 0.15,
+        reits: 0.05,
+        gold: 0.05
+      });
+    } else if (preset === 'all_weather') {
+      setCustomWeights({
+        cash: 0.05,
+        gov_backed: 0.15,
+        bonds: 0.30,
+        global_equity: 0.25,
+        sg_equity: 0.10,
+        reits: 0.05,
+        gold: 0.10
+      });
+    } else {
+      // growth
+      setCustomWeights({
+        cash: 0.05,
+        gov_backed: 0.00,
+        bonds: 0.10,
+        global_equity: 0.55,
+        sg_equity: 0.15,
+        reits: 0.10,
+        gold: 0.05
+      });
+    }
+  };
+
+  const handleApplyMixAsCustom = (weights: Record<AssetClassKey, number>) => {
+    setCustomWeights({ ...weights });
+    setActiveChartMixId('custom');
+  };
+
+  const handleDataLoadedFromCsv = (
+    loadedPrices: PricePoint[],
+    seriesName: string,
+    source: 'csv' | 'benchmark'
+  ) => {
+    if (viewMode === 'single_etf') {
+      setSingleTicker(seriesName);
+      setSinglePrices(loadedPrices);
+      setDataSource(source);
+      setErrorMessage(null);
+      runSingleEtfPipeline(loadedPrices, seriesName);
+    } else {
+      // In goal allocation mode, user can use loaded series for a proxy
+      setErrorMessage(`Loaded CSV series for ${seriesName}.`);
+    }
+  };
+
+  const scrollToMcp = () => {
+    mcpConsoleRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const toggleCurrency = () => {
+    setCurrency((prev) => (prev === 'SGD' ? 'USD' : 'SGD'));
+  };
+
+  // Determine active mix for the chart
+  const combinedMixes: MixAnalyticsState[] = [...mixStates];
+  if (customMixState) {
+    combinedMixes.push(customMixState);
+  }
+  const activeMixForChart = combinedMixes.find(m => m.mixId === activeChartMixId) || combinedMixes[0] || customMixState;
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col antialiased">
+      {/* Top Bar Contract Navigation */}
+      <Header
+        onOpenCsvUpload={() => setIsCsvModalOpen(true)}
+        onScrollToMcp={scrollToMcp}
+        mcpStatus={mcpStatus}
+        currency={currency}
+        onToggleCurrency={toggleCurrency}
+        viewMode={viewMode}
+        onToggleViewMode={setViewMode}
+      />
+
+      {/* Main Workspace Canvas */}
+      <main className="flex-1 mx-auto max-w-7xl w-full px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+        {/* Title Header Banner */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-2 border-b border-slate-800">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white font-display">
+              {viewMode === 'goal_allocation'
+                ? 'Singapore Goal-Based Asset Allocation Illustrator'
+                : 'ETF Horizon Single-Asset Analytics'}
+            </h1>
+            <p className="text-xs sm:text-sm text-slate-400 mt-1">
+              {viewMode === 'goal_allocation'
+                ? 'Illustrative forward planning for retail investors in Singapore. Models 7 asset classes with block bootstrap simulations.'
+                : 'Deterministic 5-scenario wealth projections and stochastic Monte Carlo paths from historical ETF prices.'}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3 text-xs font-mono text-slate-400">
+            <span className="flex items-center gap-1.5">
+              <Database className="h-3.5 w-3.5 text-blue-400" />
+              <span>Data Engine:</span>
+              <span className="text-slate-200 font-semibold">
+                Yahoo Finance Total Return (Adj Close)
+              </span>
+            </span>
+          </div>
+        </div>
+
+        {/* Connectivity / Notice Banner */}
+        {errorMessage && (
+          <div className="rounded-xl border border-amber-800/60 bg-amber-950/30 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-200">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <div className="leading-relaxed">
+                <span className="font-semibold text-amber-300">Notice: </span>
+                {errorMessage}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsCsvModalOpen(true)}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-900/60 hover:bg-amber-800 border border-amber-700/80 text-white font-medium text-xs transition-colors"
+              >
+                <UploadCloud className="h-3.5 w-3.5" />
+                <span>Upload CSV / Fallback</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* VIEW MODE 1: GOAL ALLOCATION ILLUSTRATOR */}
+        {viewMode === 'goal_allocation' && (
+          <div className="space-y-6">
+            {/* 1. Goal Formulation & Risk Comfort */}
+            <GoalPlanner
+              selectedPreset={selectedPresetId}
+              onSelectPreset={handleSelectPreset}
+              targetAmount={targetAmount}
+              onTargetAmountChange={setTargetAmount}
+              years={years}
+              onYearsChange={setYears}
+              startValue={startValue}
+              onStartValueChange={setStartValue}
+              monthlyContribution={monthlyContribution}
+              onMonthlyContributionChange={setMonthlyContribution}
+              riskLevel={riskLevel}
+              onRiskLevelChange={setRiskLevel}
+              inflation={inflation}
+              onInflationChange={setInflation}
+              isRealTerms={isRealTerms}
+              onToggleRealTerms={setIsRealTerms}
+              currency={currency}
+            />
+
+            {/* 2. Asset Building Blocks & Swappable Proxies */}
+            <AssetBuildingBlocks
+              configs={assetConfigs}
+              onUpdateRate={handleUpdateAssetRate}
+              onUpdateProxy={handleUpdateAssetProxy}
+              feeDrag={feeDrag}
+              onUpdateFeeDrag={setFeeDrag}
+            />
+
+            {/* 3. Three Suggested Investment Mixes Side-by-Side */}
+            <section className="space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-base font-bold text-white tracking-tight font-display">
+                    Illustrative Investment Mixes
+                  </h2>
+                  <p className="text-xs text-slate-400">
+                    Calculated via MCP <code className="font-mono text-slate-300">suggest_mixes</code> for Risk Level {riskLevel} over a {years}-year horizon.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={runGoalAnalyticsPipeline}
+                    disabled={isLoading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-800 text-xs font-mono text-slate-300 transition-colors"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${isLoading ? 'animate-spin text-blue-400' : ''}`} />
+                    <span>Re-evaluate Mixes</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {mixStates.map((mix) => (
+                  <AllocationMixCard
+                    key={mix.mixId}
+                    mix={mix}
+                    isActiveChart={activeChartMixId === mix.mixId}
+                    onSelectActiveChart={() => setActiveChartMixId(mix.mixId)}
+                    onApplyAsCustom={() => handleApplyMixAsCustom(mix.weights)}
+                    targetAmount={targetAmount}
+                    currentMonthlyContribution={monthlyContribution}
+                    currency={currency}
+                    isRealTerms={isRealTerms}
+                    years={years}
+                  />
+                ))}
+              </div>
+            </section>
+
+            {/* 4. Interactive Trajectory Projection Chart */}
+            {activeMixForChart && (
+              <GoalTrajectoryChart
+                activeMix={activeMixForChart}
+                targetAmount={targetAmount}
+                currency={currency}
+                isRealTerms={isRealTerms}
+                years={years}
+                availableMixes={combinedMixes}
+                onSelectMixId={setActiveChartMixId}
+              />
+            )}
+
+            {/* 5. Custom Asset Allocation Builder */}
+            <CustomAllocationEditor
+              weights={customWeights}
+              onWeightChange={handleCustomWeightChange}
+              onNormalizeWeights={handleNormalizeCustomWeights}
+              configs={assetConfigs}
+              onApplyPresetWeights={handleApplyPresetWeights}
+              isSimulating={isLoading}
+              onRunSimulation={runGoalAnalyticsPipeline}
+            />
+
+            {/* Custom Mix Card if exists */}
+            {customMixState && (
+              <div className="pt-2">
+                <AllocationMixCard
+                  mix={customMixState}
+                  isActiveChart={activeChartMixId === 'custom'}
+                  onSelectActiveChart={() => setActiveChartMixId('custom')}
+                  onApplyAsCustom={() => {}}
+                  targetAmount={targetAmount}
+                  currentMonthlyContribution={monthlyContribution}
+                  currency={currency}
+                  isRealTerms={isRealTerms}
+                  years={years}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* VIEW MODE 2: PRESERVED SINGLE ETF HORIZON DEEP DIVE */}
+        {viewMode === 'single_etf' && (
+          <div className="space-y-6">
+            {/* Global Controls */}
+            <Controls
+              ticker={singleTicker}
+              onTickerChange={(t) => setSingleTicker(t)}
+              years={singleYears}
+              onYearsChange={(y) => setSingleYears(y)}
+              initialAmount={singleInitial}
+              onInitialAmountChange={(a) => setSingleInitial(a)}
+              monthlyContribution={singleMonthly}
+              onMonthlyContributionChange={(c) => setSingleMonthly(c)}
+              cagrAdjustment={singleCagrAdj}
+              onCagrAdjustmentChange={(adj) => setSingleCagrAdj(adj)}
+              isLoading={isLoading}
+              onRunMcpPipeline={() => fetchSingleTickerData(singleTicker, singleYears)}
+              currency={currency}
+            />
+
+            {/* Key Performance Indicators (KPI Cards) */}
+            <KpiCards
+              ticker={singleTicker}
+              metrics={singleMetrics}
+              scenarios={singleScenarios}
+              currency={currency}
+              years={singleYears}
+            />
+
+            {/* Multi-Ticker 10-Year Horizon Comparison Chart */}
+            <BenchmarkComparisonChart
+              years={singleYears}
+              initialAmount={singleInitial}
+              monthlyContribution={singleMonthly}
+              currency={currency}
+              activePrimaryTicker={singleTicker}
+              onSelectPrimaryTicker={(t) => setSingleTicker(t)}
+            />
+
+            {/* Scenario Breakdown & Monte Carlo Ledger */}
+            <SummaryTable
+              scenarios={singleScenarios}
+              monteCarlo={singleMonteCarlo}
+              currency={currency}
+              initialAmount={singleInitial}
+              monthlyContribution={singleMonthly}
+              years={singleYears}
+            />
+          </div>
+        )}
+
+        {/* MCP Activity Panel (Live JSON-RPC Telemetry) */}
+        <div ref={mcpConsoleRef} className="pt-4">
+          <McpActivityPanel />
+        </div>
+      </main>
+
+      {/* CSV Fallback Modal */}
+      <CsvUploadModal
+        isOpen={isCsvModalOpen}
+        onClose={() => setIsCsvModalOpen(false)}
+        onDataLoaded={handleDataLoadedFromCsv}
+      />
+
+      {/* Footer */}
+      <Footer />
+    </div>
+  );
+}
