@@ -9,7 +9,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Header } from './components/Header';
 import { GoalPlanner, SINGAPORE_GOAL_PRESETS, GoalPreset } from './components/GoalPlanner';
-import { AssetBuildingBlocks } from './components/AssetBuildingBlocks';
 import { AllocationMixCard } from './components/AllocationMixCard';
 import { GoalTrajectoryChart } from './components/GoalTrajectoryChart';
 import { CustomAllocationEditor } from './components/CustomAllocationEditor';
@@ -540,27 +539,6 @@ export default function App() {
     setRiskLevel(preset.defaultRisk);
   };
 
-  // Handlers for Building Blocks Updates
-  const handleUpdateAssetRate = (key: AssetClassKey, rate: number) => {
-    setAssetConfigs(prev => ({
-      ...prev,
-      [key]: {
-        ...prev[key],
-        fixedRate: rate
-      }
-    }));
-  };
-
-  const handleUpdateAssetProxy = (key: AssetClassKey, ticker: string) => {
-    setAssetConfigs(prev => ({
-      ...prev,
-      [key]: {
-        ...prev[key],
-        currentProxy: ticker
-      }
-    }));
-  };
-
   // Handlers for Custom Weights
   const handleCustomWeightChange = (key: AssetClassKey, newWeight: number) => {
     setCustomWeights(prev => ({
@@ -764,16 +742,7 @@ export default function App() {
               currency={currency}
             />
 
-            {/* 2. Asset Building Blocks & Swappable Proxies */}
-            <AssetBuildingBlocks
-              configs={assetConfigs}
-              onUpdateRate={handleUpdateAssetRate}
-              onUpdateProxy={handleUpdateAssetProxy}
-              feeDrag={feeDrag}
-              onUpdateFeeDrag={setFeeDrag}
-            />
-
-            {/* 3. Three Suggested Investment Mixes Side-by-Side */}
+            {/* 2. Three Suggested Investment Mixes Side-by-Side */}
             <section className="space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
