@@ -196,12 +196,20 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
             </div>
 
             <div className="text-right font-mono">
-              <span className="text-base font-extrabold text-blue-600">
-                {reqMonthly !== undefined
-                  ? `${currencySymbol}${reqMonthly.toLocaleString()}`
-                  : 'Computing...'}
-              </span>
-              <span className="text-xs text-slate-500">/mo</span>
+              {req?.achievable === false ? (
+                <span className="text-xs font-bold text-rose-600">
+                  Unattainable ({(req.achieved_probability ? (req.achieved_probability * 100).toFixed(0) : 0)}% max)
+                </span>
+              ) : (
+                <>
+                  <span className="text-base font-extrabold text-blue-600">
+                    {reqMonthly !== undefined
+                      ? `${currencySymbol}${reqMonthly.toLocaleString()}`
+                      : 'Computing...'}
+                  </span>
+                  <span className="text-xs text-slate-500">/mo</span>
+                </>
+              )}
             </div>
           </div>
 
@@ -209,19 +217,25 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
           {reqMonthly !== undefined && (
             <div
               className={`p-2 rounded-lg text-xs font-mono flex items-center justify-between ${
-                monthlyDiff >= 0
+                req?.achievable === false
+                  ? 'bg-rose-50 border border-rose-200 text-rose-800'
+                  : monthlyDiff >= 0
                   ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
                   : 'bg-amber-50 border border-amber-200 text-amber-800'
               }`}
             >
               <div className="flex items-center gap-1.5">
-                {monthlyDiff >= 0 ? (
+                {req?.achievable === false ? (
+                  <AlertTriangle className="h-3.5 w-3.5 text-rose-600 shrink-0" />
+                ) : monthlyDiff >= 0 ? (
                   <CheckCircle className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
                 ) : (
                   <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
                 )}
                 <span>
-                  {monthlyDiff >= 0
+                  {req?.achievable === false
+                    ? 'Target exceeds maximum search bound'
+                    : monthlyDiff >= 0
                     ? `Surplus of ${currencySymbol}${Math.abs(monthlyDiff).toLocaleString()}/mo`
                     : `Shortfall of ${currencySymbol}${Math.abs(monthlyDiff).toLocaleString()}/mo`}
                 </span>
@@ -263,15 +277,18 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
           </div>
         </div>
 
-        {/* Worst Case Drawdown */}
-        {sim?.worst_case_drawdown !== undefined && (
+        {/* Unit Drawdown (Median & P95) */}
+        {(sim?.drawdown_p95 !== undefined || sim?.worst_case_drawdown !== undefined) && (
           <div className="flex items-center justify-between text-[11px] font-mono text-slate-500 px-1">
             <span className="flex items-center gap-1">
               <TrendingDown className="h-3 w-3 text-rose-600" />
-              Worst-case simulated drawdown:
+              <span>Simulated Drawdown (Median / P95):</span>
             </span>
-            <span className="text-rose-600 font-bold">
-              {(sim.worst_case_drawdown * 100).toFixed(1)}%
+            <span className="text-slate-800 font-bold">
+              {sim.drawdown_median !== undefined ? `${(sim.drawdown_median * 100).toFixed(1)}% / ` : ''}
+              <span className="text-rose-600">
+                {((sim.drawdown_p95 ?? sim.worst_case_drawdown) * 100).toFixed(1)}%
+              </span>
             </span>
           </div>
         )}

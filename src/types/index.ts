@@ -96,12 +96,19 @@ export interface BlendedSeriesResponse {
   annualized_volatility: number;
   max_drawdown: number;
   total_months: number;
+  start_date?: string;
+  end_date?: string;
+  aligned_months?: number;
+  base_currency?: string;
+  warnings?: string[];
   components_summary: Array<{
     asset_class: string;
     identifier: string;
     weight: number;
     cagr: number;
     volatility: number;
+    currency?: string;
+    fx_applied?: boolean;
   }>;
 }
 
@@ -116,12 +123,15 @@ export interface GoalSimulationResponse {
   real_p10_final: number;
   real_p50_final: number;
   real_p90_final: number;
+  drawdown_median?: number;
+  drawdown_p95?: number;
   worst_case_drawdown: number;
   total_contributed: number;
   target_amount: number;
   years: number;
   inflation: number;
   fee_drag: number;
+  seed?: number;
   trajectories: Array<{
     year: number;
     p10: number;
@@ -136,13 +146,16 @@ export interface GoalSimulationResponse {
 
 export interface RequiredContributionResponse {
   required_monthly_contribution: number;
+  achieved_probability?: number;
   confidence: number;
+  achievable?: boolean;
   target_amount: number;
   years: number;
   start_value: number;
   real_terms: boolean;
   inflation: number;
   fee_drag: number;
+  seed?: number;
   expected_terminal_p50: number;
 }
 
@@ -153,7 +166,8 @@ export interface SuggestedMixDefinition {
   description: string;
   rationale: string;
   risk_rating: string;
-  expected_cagr_estimate: number;
+  horizon_adjustment?: number;
+  expected_cagr_estimate?: number;
   components: Array<{
     asset_class: AssetClassKey;
     name: string;
@@ -162,6 +176,55 @@ export interface SuggestedMixDefinition {
     default_rate?: number;
     weight: number;
   }>;
+}
+
+export interface PlanGoalMix {
+  mix_id: string;
+  name: string;
+  label: string;
+  description: string;
+  rationale: string;
+  risk_rating: string;
+  weights: Record<string, number>;
+  horizon_adjustment?: number;
+  historical_blended_cagr: number;
+  historical_annualized_volatility: number;
+  data_window: {
+    start_date: string;
+    end_date: string;
+    total_months: number;
+  };
+  probability_of_success: number;
+  real_probability_of_success: number;
+  median_final_value: number;
+  p10_final: number;
+  p90_final: number;
+  real_median_final_value: number;
+  real_p10_final: number;
+  real_p90_final: number;
+  yearly_trajectory: Array<{
+    year: number;
+    p10: number;
+    p50: number;
+    p90: number;
+    real_p10: number;
+    real_p50: number;
+    real_p90: number;
+    totalContributed: number;
+  }>;
+  drawdown_median: number;
+  drawdown_p95: number;
+  required_monthly_contribution: number;
+  achieved_probability: number;
+  achievable: boolean;
+}
+
+export interface PlanGoalResponse {
+  mixes: PlanGoalMix[];
+  sources: string[];
+  as_of: string;
+  warnings: string[];
+  disclaimer: string;
 }
 
 export interface MixAnalyticsState {

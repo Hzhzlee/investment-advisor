@@ -4,15 +4,16 @@
  * Public data provider: Yahoo Finance public chart endpoint (NO API keys or env vars needed)
  * with verified fallback benchmarks for resilient zero-failure execution.
  * 
- * Exposes 8 tools:
+ * Exposes 9 tools:
  * 1. get_price_history: dividend-adjusted total returns, raw close, currency & status
  * 2. compute_metrics: CAGR, annualized volatility, max drawdown
  * 3. project_scenarios: deterministic 5-scenario wealth projections
- * 4. monte_carlo: stochastic GBM trajectory percentiles
- * 5. build_blended_series: monthly blended return series with annual rebalancing
- * 6. simulate_goal: 6-month block bootstrap simulation with nominal & real-terms percentiles
- * 7. solve_required_contribution: bisection solver for required monthly contribution at target confidence
- * 8. suggest_mixes: illustrative asset allocations tailored for Singapore investors (risk levels 1-5)
+ * 4. monte_carlo: stochastic GBM trajectory percentiles with optional seed
+ * 5. build_blended_series: monthly blended return series with annual rebalancing and FX conversion
+ * 6. simulate_goal: 6-month block bootstrap simulation with nominal & real-terms percentiles and unit return drawdown
+ * 7. solve_required_contribution: bisection solver for required monthly contribution at target probability confidence
+ * 8. suggest_mixes: illustrative asset allocations with deterministic horizon glide rule
+ * 9. plan_goal: consolidated server-side pipeline for goal planning & evaluation
  */
 
 import { BENCHMARKS, parseCSVToPrices } from '../src/data/benchmarks.ts';
@@ -56,6 +57,7 @@ export interface MonteCarloResult {
   p10_final: number;
   p50_final: number;
   p90_final: number;
+  seed: number;
   trajectories: Array<{
     year: number;
     p10: number;
@@ -78,12 +80,19 @@ export interface BlendedSeriesResult {
   annualized_volatility: number;
   max_drawdown: number;
   total_months: number;
+  start_date: string;
+  end_date: string;
+  aligned_months: number;
+  base_currency: string;
+  warnings?: string[];
   components_summary: Array<{
     asset_class: string;
     identifier: string;
     weight: number;
     cagr: number;
     volatility: number;
+    currency?: string;
+    fx_applied?: boolean;
   }>;
 }
 
@@ -98,12 +107,15 @@ export interface GoalSimulationResult {
   real_p10_final: number;
   real_p50_final: number;
   real_p90_final: number;
-  worst_case_drawdown: number;
+  drawdown_median: number;
+  drawdown_p95: number;
+  worst_case_drawdown: number; // Mapped to drawdown_p95 for backwards compatibility
   total_contributed: number;
   target_amount: number;
   years: number;
   inflation: number;
   fee_drag: number;
+  seed: number;
   trajectories: Array<{
     year: number;
     p10: number;
@@ -118,14 +130,26 @@ export interface GoalSimulationResult {
 
 export interface RequiredContributionResult {
   required_monthly_contribution: number;
+  achieved_probability: number;
   confidence: number;
+  achievable: boolean;
   target_amount: number;
   years: number;
   start_value: number;
   real_terms: boolean;
   inflation: number;
   fee_drag: number;
+  seed: number;
   expected_terminal_p50: number;
+}
+
+export interface SuggestedMixComponent {
+  asset_class: 'cash' | 'gov_backed' | 'bonds' | 'global_equity' | 'sg_equity' | 'reits' | 'gold';
+  name: string;
+  default_proxy: string;
+  is_fixed_rate: boolean;
+  default_rate?: number;
+  weight: number;
 }
 
 export interface SuggestedMix {
@@ -135,22 +159,94 @@ export interface SuggestedMix {
   description: string;
   rationale: string;
   risk_rating: string;
-  expected_cagr_estimate: number;
-  components: Array<{
-    asset_class: 'cash' | 'gov_backed' | 'bonds' | 'global_equity' | 'sg_equity' | 'reits' | 'gold';
-    name: string;
-    default_proxy: string;
-    is_fixed_rate: boolean;
-    default_rate?: number;
-    weight: number;
-  }>;
+  horizon_adjustment: number; // percentage points shifted
+  components: SuggestedMixComponent[];
 }
 
-// MCP Tool Definitions with JSON Schemas
-const TOOLS = [
+export interface PlanGoalMixResult {
+  mix_id: string;
+  name: string;
+  label: string;
+  description: string;
+  rationale: string;
+  risk_rating: string;
+  weights: Record<string, number>;
+  horizon_adjustment?: number;
+  historical_blended_cagr: number;
+  historical_annualized_volatility: number;
+  data_window: {
+    start_date: string;
+    end_date: string;
+    total_months: number;
+  };
+  probability_of_success: number;
+  real_probability_of_success: number;
+  median_final_value: number;
+  p10_final: number;
+  p90_final: number;
+  real_median_final_value: number;
+  real_p10_final: number;
+  real_p90_final: number;
+  yearly_trajectory: Array<{
+    year: number;
+    p10: number;
+    p50: number;
+    p90: number;
+    real_p10: number;
+    real_p50: number;
+    real_p90: number;
+    totalContributed: number;
+  }>;
+  drawdown_median: number;
+  drawdown_p95: number;
+  required_monthly_contribution: number;
+  achieved_probability: number;
+  achievable: boolean;
+}
+
+export interface PlanGoalResult {
+  mixes: PlanGoalMixResult[];
+  sources: string[];
+  as_of: string;
+  warnings: string[];
+  disclaimer: string;
+}
+
+// PRNG: Mulberry32 implementation
+export function createMulberry32(seed: number = 42) {
+  let s = Math.trunc(seed) >>> 0;
+  return function next(): number {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// In-memory cache for Yahoo price and FX queries with 1-hour TTL
+interface CacheEntry {
+  data: {
+    currency: string;
+    adjusted_close_available: boolean;
+    prices: PricePoint[];
+    source: 'yahoo' | 'benchmark_snapshot';
+    as_of: string;
+    warning?: string;
+  };
+  timestamp: number;
+}
+const priceCache = new Map<string, CacheEntry>();
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+// Standard disclaimer text
+export const STANDARD_DISCLAIMER =
+  "Illustrative scenarios based on past data and stated assumptions. Not personalised financial advice. Past performance does not guarantee future results.";
+
+// Tool Definitions with JSON Schemas & Annotations
+export const TOOLS = [
   {
     name: "get_price_history",
-    description: "Fetch monthly dividend-adjusted (total return) and raw closing prices with currency from Yahoo Finance public chart endpoint. If dividend-adjusted data is unavailable, falls back to raw close and flags it.",
+    description: "Fetch monthly dividend-adjusted (total return) and raw closing prices with currency from Yahoo Finance public chart endpoint. Decides adjusted vs raw consistently and excludes the incomplete current month.",
     inputSchema: {
       type: "object",
       properties: {
@@ -165,6 +261,10 @@ const TOOLS = [
         }
       },
       required: ["ticker"]
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: true
     }
   },
   {
@@ -183,21 +283,25 @@ const TOOLS = [
             },
             required: ["date", "close"]
           },
-          description: "Chronological monthly price series"
+          description: "Chronological monthly price series (2-600 points)"
         }
       },
       required: ["prices"]
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false
     }
   },
   {
     name: "project_scenarios",
-    description: "Compute 10-year forward deterministic wealth projections for five scenarios with CAGR adjusted relative to base (-20%, -10%, base, +10%, +20%) with monthly contributions, fee drag, and compounding.",
+    description: "Compute forward deterministic wealth projections across five scenarios with CAGR adjusted relative to base (-20%, -10%, base, +10%, +20%) with monthly contributions and annual fee drag (default 0.002).",
     inputSchema: {
       type: "object",
       properties: {
         start_value: {
           type: "number",
-          description: "Initial investment capital (e.g. 10000)"
+          description: "Initial investment capital"
         },
         base_cagr: {
           type: "number",
@@ -205,7 +309,7 @@ const TOOLS = [
         },
         years: {
           type: "number",
-          description: "Forward projection horizon in years (default 10)",
+          description: "Forward projection horizon in years (1-30, default 10)",
           default: 10
         },
         monthly_contribution: {
@@ -220,11 +324,15 @@ const TOOLS = [
         }
       },
       required: ["start_value", "base_cagr"]
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false
     }
   },
   {
     name: "monte_carlo",
-    description: "Simulate forward portfolio paths from historical monthly returns using Monte Carlo Geometric Brownian Motion and extract 10th, 50th (median), and 90th percentile trajectories.",
+    description: "Simulate forward portfolio paths from historical monthly returns using Monte Carlo Geometric Brownian Motion and extract 10th, 50th, and 90th percentile trajectories. Accepts an optional integer seed.",
     inputSchema: {
       type: "object",
       properties: {
@@ -238,7 +346,7 @@ const TOOLS = [
             },
             required: ["date", "close"]
           },
-          description: "Historical price series used to derive historical monthly drift and volatility"
+          description: "Historical price series (2-600 points)"
         },
         start_value: {
           type: "number",
@@ -247,7 +355,7 @@ const TOOLS = [
         },
         years: {
           type: "number",
-          description: "Forward simulation horizon in years (default 10)",
+          description: "Forward simulation horizon in years (1-30, default 10)",
           default: 10
         },
         monthly_contribution: {
@@ -257,21 +365,30 @@ const TOOLS = [
         },
         n_paths: {
           type: "number",
-          description: "Number of simulated paths (default 1000)",
+          description: "Number of simulated paths (default 1000, max 3000)",
           default: 1000
         },
         fee_drag: {
           type: "number",
           description: "Annual fee drag decimal (default 0.002)",
           default: 0.002
+        },
+        seed: {
+          type: "number",
+          description: "Optional PRNG integer seed (default 42)",
+          default: 42
         }
       },
       required: ["prices"]
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false
     }
   },
   {
     name: "build_blended_series",
-    description: "Combines asset components (market proxies and fixed-rate assets) with target weights into a monthly blended return series with annual rebalancing.",
+    description: "Combines asset components (market proxies and fixed-rate assets) with target weights into a monthly blended return series. Aligns market components by calendar month (YYYY-MM intersection), converts foreign currencies to base_currency via monthly FX, and rebalances annually.",
     inputSchema: {
       type: "object",
       properties: {
@@ -283,41 +400,50 @@ const TOOLS = [
               asset_class: { type: "string", description: "Asset class identifier" },
               ticker: { type: "string", description: "Market proxy ticker (e.g. 'VT', 'AGG')" },
               fixed_rate: { type: "number", description: "Annual assumed rate decimal (e.g. 0.028 for 2.8%)" },
-              weight: { type: "number", description: "Target asset allocation weight decimal (e.g. 0.35 for 35%)" },
+              weight: { type: "number", description: "Target asset allocation weight decimal" },
               prices: { type: "array", description: "Optional preloaded price series" }
             },
             required: ["asset_class", "weight"]
           },
-          description: "List of portfolio building block components"
+          description: "List of portfolio building block components (1-10)"
         },
         years: {
           type: "number",
-          description: "Historical horizon duration in years (default 10)",
+          description: "Historical horizon duration in years (1-30, default 10)",
           default: 10
         },
         rebalance: {
           type: "string",
           description: "Rebalancing frequency ('annual' default)",
           default: "annual"
+        },
+        base_currency: {
+          type: "string",
+          description: "Base currency for valuation and returns (default 'SGD')",
+          default: "SGD"
         }
       },
       required: ["components"]
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: true
     }
   },
   {
     name: "simulate_goal",
-    description: "Simulates forward goal feasibility using a 6-month block bootstrap of historical monthly returns. Returns probability of reaching target amount, 10th/50th/90th percentile trajectories, worst-case drawdown, and real-terms (inflation-adjusted) metrics.",
+    description: "Simulates forward goal feasibility using a 6-month block bootstrap with seeded PRNG. Computes drawdown on a unit return index (without contributions), returning drawdown_median, drawdown_p95, and nominal/real success percentiles.",
     inputSchema: {
       type: "object",
       properties: {
         returns: {
           type: "array",
           items: { type: "number" },
-          description: "Chronological monthly decimal return series"
+          description: "Chronological monthly decimal return series (12-600 numbers > -1)"
         },
         start_value: {
           type: "number",
-          description: "Starting portfolio capital in currency"
+          description: "Starting portfolio capital"
         },
         monthly_contribution: {
           type: "number",
@@ -325,15 +451,15 @@ const TOOLS = [
         },
         years: {
           type: "number",
-          description: "Forward goal horizon in years"
+          description: "Forward goal horizon in years (1-30)"
         },
         target_amount: {
           type: "number",
-          description: "Target savings / wealth goal amount"
+          description: "Target wealth goal amount (> 0)"
         },
         n_paths: {
           type: "number",
-          description: "Number of bootstrap paths (default 1000)",
+          description: "Number of bootstrap paths (default 1000, 100-3000)",
           default: 1000
         },
         inflation: {
@@ -343,39 +469,48 @@ const TOOLS = [
         },
         fee_drag: {
           type: "number",
-          description: "Annual fee drag / expense ratio decimal (default 0.002 for 0.2%)",
+          description: "Annual fee drag decimal (default 0.002 for 0.2%)",
           default: 0.002
+        },
+        seed: {
+          type: "number",
+          description: "Optional PRNG integer seed (default 42)",
+          default: 42
         }
       },
       required: ["returns", "start_value", "monthly_contribution", "years", "target_amount"]
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false
     }
   },
   {
     name: "solve_required_contribution",
-    description: "Determines the minimum monthly contribution required to reach the target amount at the specified confidence level (default 80%) using bisection on block-bootstrapped paths.",
+    description: "Determines the minimum monthly contribution required to achieve P(final >= target) >= confidence using bisection with common random numbers. Returns achievable=false if confidence is unachievable.",
     inputSchema: {
       type: "object",
       properties: {
         returns: {
           type: "array",
           items: { type: "number" },
-          description: "Monthly decimal return series"
+          description: "Monthly decimal return series (12-600 numbers > -1)"
         },
         start_value: {
           type: "number",
-          description: "Starting portfolio capital"
+          description: "Starting portfolio capital (>= 0)"
         },
         years: {
           type: "number",
-          description: "Horizon in years"
+          description: "Horizon in years (1-30)"
         },
         target_amount: {
           type: "number",
-          description: "Target wealth goal amount"
+          description: "Target wealth goal amount (> 0)"
         },
         confidence: {
           type: "number",
-          description: "Target probability confidence decimal (default 0.80 for 80%)",
+          description: "Target probability confidence decimal (0.50-0.99, default 0.80)",
           default: 0.80
         },
         inflation: {
@@ -392,14 +527,23 @@ const TOOLS = [
           type: "number",
           description: "Annual fee drag decimal (default 0.002)",
           default: 0.002
+        },
+        seed: {
+          type: "number",
+          description: "Optional PRNG integer seed (default 42)",
+          default: 42
         }
       },
       required: ["returns", "start_value", "years", "target_amount"]
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false
     }
   },
   {
     name: "suggest_mixes",
-    description: "Generates three labelled illustrative asset allocations tailored for Singapore retail investors based on risk comfort level (1-5) and investment horizon.",
+    description: "Generates three labelled illustrative asset allocations tailored for Singapore retail investors. Applies a deterministic horizon glide rule (horizon <=3 shifts 40% equity/reits/gold into gov/cash; 4-5 shifts 20%). Output percentages are calculated dynamically from weights.",
     inputSchema: {
       type: "object",
       properties: {
@@ -409,25 +553,80 @@ const TOOLS = [
         },
         horizon_years: {
           type: "number",
-          description: "Investment time horizon in years"
+          description: "Investment time horizon in years (1-30)"
         }
       },
       required: ["risk_level", "horizon_years"]
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false
+    }
+  },
+  {
+    name: "plan_goal",
+    description: "Consolidated server-side planning tool. Evaluates goal feasibility across suggested mixes or custom components in one call: fetches data, converts currencies, builds blended series, simulates paths, and solves required contribution.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        start_value: { type: "number", description: "Starting portfolio capital (>= 0)" },
+        monthly_contribution: { type: "number", description: "Monthly contribution amount (>= 0)" },
+        years: { type: "number", description: "Goal horizon in years (1-30)" },
+        target_amount: { type: "number", description: "Target wealth goal amount (> 0)" },
+        confidence: { type: "number", description: "Confidence level decimal (0.50-0.99, default 0.80)", default: 0.80 },
+        inflation: { type: "number", description: "Annual inflation rate decimal (default 0.025)", default: 0.025 },
+        fee_drag: { type: "number", description: "Annual fee drag decimal (default 0.002)", default: 0.002 },
+        base_currency: { type: "string", description: "Base currency (default 'SGD')", default: "SGD" },
+        seed: { type: "number", description: "PRNG seed (default 42)", default: 42 },
+        risk_level: { type: "number", description: "Optional risk level (1-5) to evaluate all 3 suggested mixes" },
+        components: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              asset_class: { type: "string" },
+              ticker: { type: "string" },
+              fixed_rate: { type: "number" },
+              weight: { type: "number" }
+            },
+            required: ["asset_class", "weight"]
+          },
+          description: "Optional custom components to evaluate"
+        }
+      },
+      required: ["start_value", "monthly_contribution", "years", "target_amount"]
+    },
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: true
     }
   }
 ];
 
-// Helper: Yahoo Finance public fetcher with benchmark fallback
+// Helper: Yahoo Finance public fetcher with benchmark fallback & timeout
 export async function fetchYahooPriceHistory(
   ticker: string,
   years: number = 10
-): Promise<{ currency: string; adjusted_close_available: boolean; prices: PricePoint[] }> {
+): Promise<{
+  currency: string;
+  adjusted_close_available: boolean;
+  prices: PricePoint[];
+  source: 'yahoo' | 'benchmark_snapshot';
+  as_of: string;
+  warning?: string;
+}> {
   const cleanTicker = ticker.trim().toUpperCase();
   if (!cleanTicker) {
     throw new Error("Ticker symbol cannot be empty.");
   }
 
   const range = years <= 5 ? "5y" : "10y";
+  const cacheKey = `${cleanTicker}_${range}`;
+  const cached = priceCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+    return cached.data;
+  }
+
   const urls = [
     `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanTicker)}?range=${range}&interval=1mo`,
     `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanTicker)}?range=${range}&interval=1mo`
@@ -440,10 +639,16 @@ export async function fetchYahooPriceHistory(
   };
 
   let lastError: Error | null = null;
+  const currentYM = new Date().toISOString().slice(0, 7); // current incomplete month
 
   for (const url of urls) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
+
     try {
-      const response = await fetch(url, { headers });
+      const response = await fetch(url, { headers, signal: controller.signal });
+      clearTimeout(timeoutId);
+
       if (!response.ok) {
         lastError = new Error(`Yahoo Finance HTTP ${response.status}: ${response.statusText}`);
         continue;
@@ -470,91 +675,126 @@ export async function fetchYahooPriceHistory(
         continue;
       }
 
-      let hasAdjusted = false;
-      const points: PricePoint[] = [];
+      // Check adjusted vs raw once per series:
+      // Count valid adjclose points
+      let validAdjCount = 0;
+      for (const val of adjCloses) {
+        if (typeof val === "number" && !isNaN(val) && val > 0) {
+          validAdjCount++;
+        }
+      }
+
+      // If adjclose is present for essentially all points (>= 90%), use adjusted for all points.
+      // Otherwise use raw close for all points. Never mix bases within a series.
+      const useAdjusted = validAdjCount >= Math.floor(timestamps.length * 0.90) && validAdjCount > 0;
+
+      const rawPoints: PricePoint[] = [];
 
       for (let i = 0; i < timestamps.length; i++) {
         const t = timestamps[i];
         const rawQuote = quoteCloses[i];
         const rawAdj = adjCloses[i];
 
-        let chosenClose: number | null = null;
-        let isAdjPoint = false;
+        const dateStr = new Date(t * 1000).toISOString().slice(0, 10);
+        // Phase 1.6: Drop the last data point if it belongs to current incomplete month
+        if (dateStr.slice(0, 7) === currentYM && i === timestamps.length - 1) {
+          continue;
+        }
 
-        // Total return: prefer dividend-adjusted close (adjclose)
-        if (typeof rawAdj === "number" && !isNaN(rawAdj) && rawAdj > 0) {
-          chosenClose = rawAdj;
-          isAdjPoint = true;
-          hasAdjusted = true;
-        } else if (typeof rawQuote === "number" && !isNaN(rawQuote) && rawQuote > 0) {
-          chosenClose = rawQuote;
+        let chosenClose: number | null = null;
+        if (useAdjusted) {
+          if (typeof rawAdj === "number" && !isNaN(rawAdj) && rawAdj > 0) {
+            chosenClose = rawAdj;
+          } else if (typeof rawQuote === "number" && !isNaN(rawQuote) && rawQuote > 0) {
+            chosenClose = rawQuote;
+          }
+        } else {
+          if (typeof rawQuote === "number" && !isNaN(rawQuote) && rawQuote > 0) {
+            chosenClose = rawQuote;
+          }
         }
 
         if (chosenClose !== null && chosenClose > 0) {
-          const dateStr = new Date(t * 1000).toISOString().slice(0, 10);
-          points.push({
+          rawPoints.push({
             date: dateStr,
             close: Math.round(chosenClose * 10000) / 10000,
             raw_close: typeof rawQuote === "number" ? Math.round(rawQuote * 10000) / 10000 : undefined,
             adj_close: typeof rawAdj === "number" ? Math.round(rawAdj * 10000) / 10000 : undefined,
-            is_adjusted: isAdjPoint
+            is_adjusted: useAdjusted
           });
         }
       }
 
       // Sort chronologically ascending
-      points.sort((a, b) => a.date.localeCompare(b.date));
+      rawPoints.sort((a, b) => a.date.localeCompare(b.date));
 
       const targetPoints = years * 12 + 1;
-      const finalPoints = points.length > targetPoints ? points.slice(-targetPoints) : points;
+      const finalPoints = rawPoints.length > targetPoints ? rawPoints.slice(-targetPoints) : rawPoints;
 
       if (finalPoints.length < 2) {
         throw new Error(`Insufficient monthly price observations (${finalPoints.length}) found for ${cleanTicker}.`);
       }
 
-      return {
+      const result = {
         currency,
-        adjusted_close_available: hasAdjusted,
-        prices: finalPoints
+        adjusted_close_available: useAdjusted,
+        prices: finalPoints,
+        source: 'yahoo' as const,
+        as_of: finalPoints[finalPoints.length - 1].date
       };
+
+      priceCache.set(cacheKey, { data: result, timestamp: Date.now() });
+      return result;
     } catch (err: any) {
+      clearTimeout(timeoutId);
       lastError = err instanceof Error ? err : new Error(String(err));
     }
   }
 
-  // Graceful fallback to verified benchmark series if Yahoo API is rate-limited or fails
+  // Graceful fallback to verified benchmark series if Yahoo API fails or is rate-limited
   const benchmark = BENCHMARKS[cleanTicker];
   if (benchmark) {
     const parsed = parseCSVToPrices(benchmark.csvData);
+    // Filter out incomplete current month if any
+    const filtered = parsed.filter(p => p.date.slice(0, 7) !== currentYM);
     const targetPoints = years * 12 + 1;
-    const finalPoints = parsed.length > targetPoints ? parsed.slice(-targetPoints) : parsed;
+    const finalPoints = filtered.length > targetPoints ? filtered.slice(-targetPoints) : filtered;
     const hasAdj = finalPoints.some(p => p.is_adjusted);
 
-    return {
+    const fallbackResult = {
       currency: benchmark.currency,
       adjusted_close_available: hasAdj,
-      prices: finalPoints
+      prices: finalPoints,
+      source: 'benchmark_snapshot' as const,
+      as_of: finalPoints[finalPoints.length - 1].date,
+      warning: `Yahoo Finance unavailable for ${cleanTicker}. Using verified historical benchmark snapshot.`
     };
+
+    priceCache.set(cacheKey, { data: fallbackResult, timestamp: Date.now() });
+    return fallbackResult;
   }
 
   throw lastError || new Error(`Unable to retrieve historical chart data for ${cleanTicker} from Yahoo Finance.`);
 }
 
-// Helper: Compute financial metrics (CAGR, annualised volatility, max drawdown)
+// Helper: Calculate standard financial metrics
 export function calculateMetrics(rawPrices: PricePoint[]): MetricResults {
+  if (!Array.isArray(rawPrices) || rawPrices.length < 2) {
+    throw new Error("At least 2 chronological price points required to calculate metrics.");
+  }
+
   const prices = rawPrices
     .filter(p => p && typeof p.close === "number" && !isNaN(p.close) && p.close > 0)
     .sort((a, b) => a.date.localeCompare(b.date));
 
   if (prices.length < 2) {
-    throw new Error("At least 2 chronological price points required to calculate metrics.");
+    throw new Error("At least 2 valid price points required to calculate metrics.");
   }
 
   const startPrice = prices[0].close;
   const endPrice = prices[prices.length - 1].close;
   const totalMonths = prices.length - 1;
 
-  // Calendar elapsed years
   const startDate = new Date(prices[0].date);
   const endDate = new Date(prices[prices.length - 1].date);
   let elapsedYears = (endDate.getTime() - startDate.getTime()) / (365.25 * 24 * 3600 * 1000);
@@ -562,10 +802,8 @@ export function calculateMetrics(rawPrices: PricePoint[]): MetricResults {
     elapsedYears = totalMonths / 12;
   }
 
-  // Compound Annual Growth Rate (CAGR)
   const cagr = Math.pow(endPrice / startPrice, 1 / elapsedYears) - 1;
 
-  // Monthly returns for annualised volatility
   const monthlyReturns: number[] = [];
   for (let i = 1; i < prices.length; i++) {
     const prev = prices[i - 1].close;
@@ -574,18 +812,18 @@ export function calculateMetrics(rawPrices: PricePoint[]): MetricResults {
   }
 
   const meanReturn = monthlyReturns.reduce((sum, r) => sum + r, 0) / monthlyReturns.length;
-  const variance = monthlyReturns.reduce((sum, r) => sum + Math.pow(r - meanReturn, 2), 0) / (monthlyReturns.length - 1 || 1);
+  const variance =
+    monthlyReturns.reduce((sum, r) => sum + Math.pow(r - meanReturn, 2), 0) / (monthlyReturns.length - 1 || 1);
   const monthlyVol = Math.sqrt(variance);
   const annualizedVolatility = monthlyVol * Math.sqrt(12);
 
-  // Maximum Drawdown: peak-to-trough decline
   let peak = -Infinity;
   let maxDrawdown = 0;
   for (const p of prices) {
     if (p.close > peak) {
       peak = p.close;
     }
-    const dd = (p.close - peak) / peak;
+    const dd = (p.close - peak) / (peak || 1);
     if (dd < maxDrawdown) {
       maxDrawdown = dd;
     }
@@ -603,7 +841,7 @@ export function calculateMetrics(rawPrices: PricePoint[]): MetricResults {
   };
 }
 
-// Helper: Deterministic scenario projections compounding monthly with fee drag
+// Helper: Deterministic scenario projections with annual fee drag (default 0.002)
 export function calculateScenarios(
   startValue: number,
   baseCagr: number,
@@ -622,15 +860,11 @@ export function calculateScenarios(
   const results: ScenarioResult[] = [];
 
   for (const item of adjustments) {
-    // Relative adjustment net of fee drag
     const grossCagr = baseCagr * (1 + item.adj);
     const netCagr = Math.max(-0.99, grossCagr - feeDrag);
-
-    // Monthly effective compounding rate
     const monthlyRate = netCagr > -1 ? Math.pow(1 + netCagr, 1 / 12) - 1 : netCagr / 12;
 
     const trajectory: Array<{ year: number; value: number; totalContributed: number }> = [];
-
     let currentValue = startValue;
     let totalContributed = startValue;
 
@@ -675,14 +909,15 @@ export function calculateScenarios(
   return results;
 }
 
-// Helper: Monte Carlo Geometric Brownian Motion simulation
+// Helper: Monte Carlo Geometric Brownian Motion simulation with optional seed
 export function calculateMonteCarlo(
   prices: PricePoint[],
   startValue: number = 10000,
   years: number = 10,
   monthlyContribution: number = 500,
   nPaths: number = 1000,
-  feeDrag: number = 0.002
+  feeDrag: number = 0.002,
+  seed: number = 42
 ): MonteCarloResult {
   if (!prices || prices.length < 2) {
     throw new Error("At least 2 price observations required to compute Monte Carlo simulation.");
@@ -707,15 +942,17 @@ export function calculateMonteCarlo(
   const stdLog = Math.sqrt(varLog);
 
   const totalMonths = years * 12;
-  const numPaths = Math.max(100, Math.min(2000, nPaths));
+  const numPaths = Math.max(100, Math.min(3000, nPaths));
   const yearlyBuckets: number[][] = Array.from({ length: years + 1 }, () => []);
 
-  // Standard Box-Muller normal generator
+  const rng = createMulberry32(seed);
+
+  // Standard Box-Muller normal generator using seeded PRNG
   function randomNormal(): number {
     let u = 0;
     let v = 0;
-    while (u === 0) u = Math.random();
-    while (v === 0) v = Math.random();
+    while (u === 0) u = rng();
+    while (v === 0) v = rng();
     return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
   }
 
@@ -741,9 +978,11 @@ export function calculateMonteCarlo(
 
   for (let y = 0; y <= years; y++) {
     const bucket = yearlyBuckets[y].sort((a, b) => a - b);
-    const idx10 = Math.floor(0.10 * bucket.length);
-    const idx50 = Math.floor(0.50 * bucket.length);
-    const idx90 = Math.floor(0.90 * bucket.length);
+    const len = bucket.length;
+    // Percentile indexing: floor(p * (n - 1))
+    const idx10 = Math.floor(0.10 * (len - 1));
+    const idx50 = Math.floor(0.50 * (len - 1));
+    const idx90 = Math.floor(0.90 * (len - 1));
 
     trajectories.push({
       year: y,
@@ -759,23 +998,30 @@ export function calculateMonteCarlo(
     p10_final: finalTraj.p10,
     p50_final: finalTraj.p50,
     p90_final: finalTraj.p90,
+    seed,
     trajectories
   };
 }
 
 /**
  * Tool 5: build_blended_series
- * Builds monthly blended return series with annual rebalancing across 7 asset components.
+ * Combines asset components into a monthly blended return series.
+ * Aligns market components by calendar month (YYYY-MM intersection),
+ * converts currencies to base_currency using Yahoo monthly FX,
+ * and rebalances annually.
  */
 export async function buildBlendedSeries(
   rawComponents: BlendedComponent[],
   years: number = 10,
-  _rebalance: string = "annual"
+  _rebalance: string = "annual",
+  baseCurrency: string = "SGD"
 ): Promise<BlendedSeriesResult> {
   const activeComponents = rawComponents.filter(c => c && typeof c.weight === "number" && c.weight > 0);
   if (activeComponents.length === 0) {
     throw new Error("At least one component with weight > 0 is required.");
   }
+
+  const cleanBaseCurrency = (baseCurrency || "SGD").trim().toUpperCase();
 
   // Normalize weights to sum to 1.0
   const totalWeight = activeComponents.reduce((sum, c) => sum + c.weight, 0);
@@ -784,117 +1030,218 @@ export async function buildBlendedSeries(
     weight: c.weight / totalWeight
   }));
 
-  // Fetch or prepare monthly return series for each component
-  const componentMonthlyReturns: Array<{
+  const warnings: string[] = [];
+
+  // Parallel fetch of all market component tickers
+  const marketComponents = normalizedComponents.filter(
+    c => !(typeof c.fixed_rate === "number" && !isNaN(c.fixed_rate))
+  );
+
+  // Fetch prices for all market components in parallel
+  const fetchedHistories = await Promise.all(
+    marketComponents.map(async comp => {
+      const ticker = comp.ticker?.trim().toUpperCase() || comp.asset_class;
+      let prices = comp.prices;
+      let currency = cleanBaseCurrency;
+      if (!prices || prices.length < 2) {
+        if (!comp.ticker) {
+          throw new Error(`Component for ${comp.asset_class} requires either a ticker, fixed_rate, or prices array.`);
+        }
+        const history = await fetchYahooPriceHistory(ticker, years);
+        prices = history.prices;
+        currency = history.currency;
+        if (history.warning) warnings.push(history.warning);
+      }
+      return { ticker, prices, currency };
+    })
+  );
+
+  const historyMap = new Map<string, { prices: PricePoint[]; currency: string }>();
+  for (const h of fetchedHistories) {
+    historyMap.set(h.ticker, { prices: h.prices, currency: h.currency });
+  }
+
+  // Identify distinct non-base currencies needed for FX conversion
+  const neededCurrencies = new Set<string>();
+  for (const h of fetchedHistories) {
+    const cur = h.currency.toUpperCase();
+    if (cur !== cleanBaseCurrency) {
+      neededCurrencies.add(cur);
+    }
+  }
+
+  // Fetch FX series in parallel (e.g. USDSGD=X)
+  const fxMaps = new Map<string, Map<string, number>>(); // currency -> (YYYY-MM -> rate)
+  await Promise.all(
+    Array.from(neededCurrencies).map(async foreignCur => {
+      const fxTicker = `${foreignCur}${cleanBaseCurrency}=X`;
+      try {
+        const fxHistory = await fetchYahooPriceHistory(fxTicker, years);
+        if (fxHistory.warning) warnings.push(fxHistory.warning);
+        const map = new Map<string, number>();
+        for (const pt of fxHistory.prices) {
+          map.set(pt.date.slice(0, 7), pt.close);
+        }
+        fxMaps.set(foreignCur, map);
+      } catch (err: any) {
+        warnings.push(`Could not fetch FX series ${fxTicker}: ${err?.message || String(err)}. Conversion to ${cleanBaseCurrency} may be unavailable.`);
+      }
+    })
+  );
+
+  // Build price series in base currency and compute monthly returns per component keyed by YYYY-MM
+  interface ComponentData {
     asset_class: string;
     identifier: string;
     weight: number;
-    dates: string[];
-    returns: number[];
+    currency: string;
+    fx_applied: boolean;
     cagr: number;
     volatility: number;
-  }> = [];
+    returnsMap?: Map<string, number>; // for market components
+    fixed_rate?: number;
+  }
+
+  const componentDataList: ComponentData[] = [];
 
   for (const comp of normalizedComponents) {
     if (typeof comp.fixed_rate === "number" && !isNaN(comp.fixed_rate)) {
-      // Fixed rate asset (Cash or Government-backed)
-      const annualRate = comp.fixed_rate;
-      const monthlyRate = Math.pow(1 + annualRate, 1 / 12) - 1;
-      const targetMonths = years * 12;
-      const dates: string[] = [];
-      const returns: number[] = [];
-
-      const now = new Date();
-      for (let m = targetMonths; m >= 1; m--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - m, 1);
-        dates.push(d.toISOString().slice(0, 10));
-        returns.push(monthlyRate);
-      }
-
-      componentMonthlyReturns.push({
+      // Fixed rate component is assumed to be in base currency
+      componentDataList.push({
         asset_class: comp.asset_class,
-        identifier: `Assumed ${Math.round(annualRate * 1000) / 10}% p.a.`,
+        identifier: `Assumed ${Math.round(comp.fixed_rate * 1000) / 10}% p.a.`,
         weight: comp.weight,
-        dates,
-        returns,
-        cagr: annualRate,
-        volatility: 0
+        currency: cleanBaseCurrency,
+        fx_applied: false,
+        cagr: comp.fixed_rate,
+        volatility: 0,
+        fixed_rate: comp.fixed_rate
       });
     } else {
-      // Market proxy asset
-      const ticker = comp.ticker?.trim().toUpperCase();
-      if (!ticker) {
-        throw new Error(`Component for ${comp.asset_class} requires either a ticker or fixed_rate.`);
-      }
+      const ticker = (comp.ticker?.trim().toUpperCase()) || comp.asset_class;
+      const h = historyMap.get(ticker)!;
+      const rawPrices = h.prices;
+      const compCurrency = h.currency.toUpperCase();
 
-      let pricePoints: PricePoint[] = comp.prices || [];
-      if (!pricePoints || pricePoints.length < 2) {
-        const history = await fetchYahooPriceHistory(ticker, years);
-        pricePoints = history.prices;
-      }
+      let fxApplied = false;
+      let convertedPrices: PricePoint[] = rawPrices;
 
-      // Convert prices to monthly returns
-      const dates: string[] = [];
-      const returns: number[] = [];
-      for (let i = 1; i < pricePoints.length; i++) {
-        const prev = pricePoints[i - 1].close;
-        const curr = pricePoints[i].close;
-        if (prev > 0 && curr > 0) {
-          dates.push(pricePoints[i].date);
-          returns.push((curr - prev) / prev);
+      if (compCurrency !== cleanBaseCurrency) {
+        const fxMap = fxMaps.get(compCurrency);
+        if (fxMap && fxMap.size > 0) {
+          convertedPrices = rawPrices.map(pt => {
+            const ym = pt.date.slice(0, 7);
+            const fx = fxMap.get(ym);
+            if (fx && fx > 0) {
+              return {
+                ...pt,
+                close: pt.close * fx
+              };
+            }
+            return pt;
+          });
+          fxApplied = true;
+        } else {
+          warnings.push(`FX conversion unavailable for ${ticker} (${compCurrency} -> ${cleanBaseCurrency}). Using unadjusted series.`);
         }
       }
 
-      const metrics = calculateMetrics(pricePoints);
+      const metrics = calculateMetrics(convertedPrices);
 
-      componentMonthlyReturns.push({
+      // Monthly returns keyed by YYYY-MM of the end point
+      const returnsMap = new Map<string, number>();
+      for (let i = 1; i < convertedPrices.length; i++) {
+        const prev = convertedPrices[i - 1].close;
+        const curr = convertedPrices[i].close;
+        if (prev > 0 && curr > 0) {
+          const ym = convertedPrices[i].date.slice(0, 7);
+          returnsMap.set(ym, (curr - prev) / prev);
+        }
+      }
+
+      componentDataList.push({
         asset_class: comp.asset_class,
         identifier: ticker,
         weight: comp.weight,
-        dates,
-        returns,
+        currency: compCurrency,
+        fx_applied: fxApplied,
         cagr: metrics.cagr,
-        volatility: metrics.annualized_volatility
+        volatility: metrics.annualized_volatility,
+        returnsMap
       });
     }
   }
 
-  // Find minimum common length of returns
-  const minMonths = Math.min(...componentMonthlyReturns.map(c => c.returns.length));
-  if (minMonths < 2) {
-    throw new Error("Insufficient monthly observations to construct blended series.");
+  // Phase 1.5: Align market components by calendar month (YYYY-MM intersection)
+  const marketDataList = componentDataList.filter(c => c.returnsMap !== undefined);
+  let alignedMonths: string[] = [];
+
+  if (marketDataList.length > 0) {
+    const firstMap = marketDataList[0].returnsMap!;
+    alignedMonths = Array.from(firstMap.keys()).filter(ym =>
+      marketDataList.every(m => m.returnsMap!.has(ym))
+    );
+  } else {
+    // Pure fixed rate portfolio: generate the most recent target months
+    const now = new Date();
+    const count = years * 12;
+    for (let m = count; m >= 1; m--) {
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - m, 1));
+      alignedMonths.push(d.toISOString().slice(0, 7));
+    }
   }
 
-  // Align all components to the most recent `minMonths` periods
-  const alignedComponents = componentMonthlyReturns.map(c => ({
-    ...c,
-    dates: c.dates.slice(-minMonths),
-    returns: c.returns.slice(-minMonths)
-  }));
+  alignedMonths.sort(); // ascending order e.g. "2015-02", "2015-03"...
 
-  const commonDates = alignedComponents[0].dates;
+  // Limit to most recent `years * 12` periods if longer
+  const targetMonths = years * 12;
+  if (alignedMonths.length > targetMonths) {
+    alignedMonths = alignedMonths.slice(-targetMonths);
+  }
+
+  if (alignedMonths.length < 2) {
+    throw new Error("Insufficient common aligned calendar months across market components to construct blended series.");
+  }
+
+  if (alignedMonths.length < targetMonths) {
+    warnings.push(
+      `Common historical data window is ${alignedMonths.length} months (${(alignedMonths.length / 12).toFixed(1)} years), shorter than requested ${years} years.`
+    );
+  }
+
+  const startDate = `${alignedMonths[0]}-01`;
+  const endDate = `${alignedMonths[alignedMonths.length - 1]}-01`;
 
   // Simulate portfolio wealth evolution with annual rebalancing
   // Initial wealth = 100.0 at month 0
   let portfolioWealth = 100.0;
-  let assetAllocations = alignedComponents.map(c => portfolioWealth * c.weight);
+  let assetAllocations = componentDataList.map(c => portfolioWealth * c.weight);
 
   const blendedMonthlyResults: Array<{ date: string; return: number; index_value: number }> = [];
   let peakWealth = portfolioWealth;
   let maxDrawdown = 0;
 
-  for (let m = 0; m < minMonths; m++) {
-    // Annual rebalancing at start of month 12, 24, 36...
+  for (let m = 0; m < alignedMonths.length; m++) {
+    const ym = alignedMonths[m];
+
+    // Annual rebalancing based on months since the first aligned month
     if (m > 0 && m % 12 === 0) {
-      assetAllocations = alignedComponents.map(c => portfolioWealth * c.weight);
+      assetAllocations = componentDataList.map(c => portfolioWealth * c.weight);
     }
 
     const startMonthWealth = portfolioWealth;
-
-    // Grow each asset bucket by its monthly return
     let endMonthWealth = 0;
-    for (let i = 0; i < alignedComponents.length; i++) {
-      const r = alignedComponents[i].returns[m];
+
+    for (let i = 0; i < componentDataList.length; i++) {
+      const comp = componentDataList[i];
+      let r = 0;
+      if (comp.returnsMap) {
+        r = comp.returnsMap.get(ym) ?? 0;
+      } else if (comp.fixed_rate !== undefined) {
+        // Fixed-rate components generate returns for exactly those aligned months
+        r = Math.pow(1 + comp.fixed_rate, 1 / 12) - 1;
+      }
+
       assetAllocations[i] = assetAllocations[i] * (1 + r);
       endMonthWealth += assetAllocations[i];
     }
@@ -905,25 +1252,25 @@ export async function buildBlendedSeries(
     if (portfolioWealth > peakWealth) {
       peakWealth = portfolioWealth;
     }
-    const currentDrawdown = (portfolioWealth - peakWealth) / peakWealth;
+    const currentDrawdown = (portfolioWealth - peakWealth) / (peakWealth || 1);
     if (currentDrawdown < maxDrawdown) {
       maxDrawdown = currentDrawdown;
     }
 
     blendedMonthlyResults.push({
-      date: commonDates[m],
+      date: `${ym}-01`,
       return: monthlyBlendedReturn,
       index_value: Math.round(portfolioWealth * 100) / 100
     });
   }
 
-  // Compute portfolio overall CAGR & volatility
-  const elapsedYears = minMonths / 12;
+  const elapsedYears = alignedMonths.length / 12;
   const portfolioCagr = Math.pow(portfolioWealth / 100.0, 1 / elapsedYears) - 1;
 
   const returnsList = blendedMonthlyResults.map(b => b.return);
   const meanBlended = returnsList.reduce((sum, r) => sum + r, 0) / returnsList.length;
-  const varBlended = returnsList.reduce((sum, r) => sum + Math.pow(r - meanBlended, 2), 0) / (returnsList.length - 1 || 1);
+  const varBlended =
+    returnsList.reduce((sum, r) => sum + Math.pow(r - meanBlended, 2), 0) / (returnsList.length - 1 || 1);
   const annualizedVol = Math.sqrt(varBlended) * Math.sqrt(12);
 
   return {
@@ -931,21 +1278,28 @@ export async function buildBlendedSeries(
     annualized_return: portfolioCagr,
     annualized_volatility: annualizedVol,
     max_drawdown: maxDrawdown,
-    total_months: minMonths,
-    components_summary: alignedComponents.map(c => ({
+    total_months: alignedMonths.length,
+    start_date: startDate,
+    end_date: endDate,
+    aligned_months: alignedMonths.length,
+    base_currency: cleanBaseCurrency,
+    warnings: warnings.length > 0 ? warnings : undefined,
+    components_summary: componentDataList.map(c => ({
       asset_class: c.asset_class,
       identifier: c.identifier,
       weight: Math.round(c.weight * 1000) / 1000,
       cagr: c.cagr,
-      volatility: c.volatility
+      volatility: c.volatility,
+      currency: c.currency,
+      fx_applied: c.fx_applied
     }))
   };
 }
 
 /**
  * Tool 6: simulate_goal
- * Uses 6-month block bootstrapping on historical monthly returns to model goal achievement,
- * percentiles, worst-case drawdown, and real-terms inflation adjustments.
+ * 6-month block bootstrap simulation using seeded PRNG (Mulberry32).
+ * Computes drawdown on a unit return index (without contributions) so savings do not mask declines.
  */
 export function simulateGoal(
   returns: number[],
@@ -955,14 +1309,17 @@ export function simulateGoal(
   targetAmount: number,
   nPaths: number = 1000,
   inflation: number = 0.025,
-  feeDrag: number = 0.002
+  feeDrag: number = 0.002,
+  seed: number = 42
 ): GoalSimulationResult {
   if (!returns || returns.length < 2) {
     throw new Error("At least 2 historical monthly returns required to run block bootstrap goal simulation.");
   }
 
+  const rng = createMulberry32(seed);
+
   const M = returns.length;
-  const blockSize = Math.min(6, M); // 6-month block length
+  const blockSize = Math.min(6, M);
   const maxStartIdx = M - blockSize;
   const totalMonths = years * 12;
   const numPaths = Math.max(100, Math.min(3000, nPaths));
@@ -972,8 +1329,8 @@ export function simulateGoal(
 
   let nominalSuccessCount = 0;
   let realSuccessCount = 0;
-  let overallWorstDrawdown = 0;
 
+  const pathUnitDrawdowns: number[] = [];
   const monthlyFeeFactor = 1 - feeDrag / 12;
 
   for (let p = 0; p < numPaths; p++) {
@@ -981,13 +1338,14 @@ export function simulateGoal(
     yearlyNominalBuckets[0].push(nomVal);
     yearlyRealBuckets[0].push(nomVal);
 
-    let peak = nomVal;
+    // Unit return index (no contributions) to measure true investment drawdown
+    let unitWealth = 1.0;
+    let unitPeak = 1.0;
     let pathMaxDrawdown = 0;
 
     let m = 0;
     while (m < totalMonths) {
-      // Pick random block start index uniformly
-      const startIdx = Math.floor(Math.random() * (maxStartIdx + 1));
+      const startIdx = Math.floor(rng() * (maxStartIdx + 1));
       const stepsInBlock = Math.min(blockSize, totalMonths - m);
 
       for (let b = 0; b < stepsInBlock; b++) {
@@ -997,10 +1355,11 @@ export function simulateGoal(
 
         nomVal = Math.max(0, nomVal * (1 + netReturn) + monthlyContribution);
 
-        if (nomVal > peak) {
-          peak = nomVal;
+        unitWealth = unitWealth * (1 + netReturn);
+        if (unitWealth > unitPeak) {
+          unitPeak = unitWealth;
         }
-        const dd = (nomVal - peak) / (peak || 1);
+        const dd = (unitWealth - unitPeak) / (unitPeak || 1);
         if (dd < pathMaxDrawdown) {
           pathMaxDrawdown = dd;
         }
@@ -1016,9 +1375,7 @@ export function simulateGoal(
       }
     }
 
-    if (pathMaxDrawdown < overallWorstDrawdown) {
-      overallWorstDrawdown = pathMaxDrawdown;
-    }
+    pathUnitDrawdowns.push(pathMaxDrawdown);
 
     const finalNominal = nomVal;
     const finalReal = nomVal / Math.pow(1 + inflation, years);
@@ -1030,6 +1387,14 @@ export function simulateGoal(
       realSuccessCount++;
     }
   }
+
+  // Drawdowns: sort ascending (most negative first)
+  pathUnitDrawdowns.sort((a, b) => a - b);
+  const p95Idx = Math.floor(0.05 * (pathUnitDrawdowns.length - 1));
+  const p50Idx = Math.floor(0.50 * (pathUnitDrawdowns.length - 1));
+
+  const drawdown_p95 = Math.round(pathUnitDrawdowns[p95Idx] * 10000) / 10000;
+  const drawdown_median = Math.round(pathUnitDrawdowns[p50Idx] * 10000) / 10000;
 
   const trajectories: Array<{
     year: number;
@@ -1046,9 +1411,11 @@ export function simulateGoal(
     const nomBucket = yearlyNominalBuckets[y].sort((a, b) => a - b);
     const realBucket = yearlyRealBuckets[y].sort((a, b) => a - b);
 
-    const idx10 = Math.floor(0.10 * nomBucket.length);
-    const idx50 = Math.floor(0.50 * nomBucket.length);
-    const idx90 = Math.floor(0.90 * nomBucket.length);
+    const n = nomBucket.length;
+    // Percentile indexing: floor(p * (n - 1))
+    const idx10 = Math.floor(0.10 * (n - 1));
+    const idx50 = Math.floor(0.50 * (n - 1));
+    const idx90 = Math.floor(0.90 * (n - 1));
 
     const totalContributed = startValue + monthlyContribution * 12 * y;
 
@@ -1077,20 +1444,23 @@ export function simulateGoal(
     real_p10_final: finalTraj.real_p10,
     real_p50_final: finalTraj.real_p50,
     real_p90_final: finalTraj.real_p90,
-    worst_case_drawdown: overallWorstDrawdown,
+    drawdown_median,
+    drawdown_p95,
+    worst_case_drawdown: drawdown_p95,
     total_contributed: Math.round(startValue + monthlyContribution * 12 * years),
     target_amount: targetAmount,
     years,
     inflation,
     fee_drag: feeDrag,
+    seed,
     trajectories
   };
 }
 
 /**
  * Tool 7: solve_required_contribution
- * Bisection solver to find the minimum monthly contribution to achieve the target amount
- * with at least `confidence` (e.g. 80%) probability over the horizon.
+ * Bisection solver finding the minimum monthly contribution such that
+ * P(final >= target) >= confidence using common random numbers (same seed).
  */
 export function solveRequiredContribution(
   returns: number[],
@@ -1100,61 +1470,100 @@ export function solveRequiredContribution(
   confidence: number = 0.80,
   inflation: number = 0.025,
   realTerms: boolean = false,
-  feeDrag: number = 0.002
+  feeDrag: number = 0.002,
+  seed: number = 42
 ): RequiredContributionResult {
   if (!returns || returns.length < 2) {
     throw new Error("At least 2 historical monthly returns required to solve contribution.");
   }
 
   const targetConf = Math.max(0.50, Math.min(0.99, confidence));
-  const percentileTargetIdx = 1 - targetConf; // e.g. 0.20 for 80% confidence
+  const totalMonths = years * 12;
 
   // Evaluation helper for candidate contribution
-  function evaluatePercentileTerminalWealth(c: number): number {
-    const sim = simulateGoal(returns, startValue, c, years, targetAmount, 400, inflation, feeDrag);
-    const finalYear = sim.trajectories[sim.trajectories.length - 1];
-    return realTerms ? finalYear.real_p10 : finalYear.p10;
+  // Must use the SAME seed for every candidate contribution (common random numbers)
+  function getSuccessProb(c: number): number {
+    const sim = simulateGoal(returns, startValue, c, years, targetAmount, 500, inflation, feeDrag, seed);
+    return realTerms ? sim.real_probability_of_success : sim.probability_of_success;
   }
 
-  // Bisection bounds
+  // Bounds: low = 0; high starts near (target - start_value) / months and doubles up to a sensible cap
+  const initialHigh = Math.max(10, Math.ceil(Math.max(0, targetAmount - startValue) / totalMonths));
+  const maxCap = Math.max(100_000, Math.min(1_000_000, initialHigh * 4));
   let low = 0;
-  let high = Math.max(1000, Math.ceil((targetAmount - startValue) / (years * 12) * 2.5));
+  let high = Math.min(maxCap, initialHigh);
 
-  // Expand high bound if necessary
-  let highWealth = evaluatePercentileTerminalWealth(high);
-  let expandIter = 0;
-  while (highWealth < targetAmount && expandIter < 5) {
-    high *= 2;
-    highWealth = evaluatePercentileTerminalWealth(high);
-    expandIter++;
+  // Expand high bound by doubling up to maxCap
+  while (getSuccessProb(high) < targetConf && high < maxCap) {
+    const nextHigh = high * 2;
+    high = nextHigh >= maxCap ? maxCap : nextHigh;
+    if (high === maxCap) break;
   }
 
-  // Bisection loop (14-16 iterations provide accuracy to within ~$5-10)
-  for (let iter = 0; iter < 16; iter++) {
-    const mid = (low + high) / 2;
-    const simVal = evaluatePercentileTerminalWealth(mid);
+  const probAtHigh = getSuccessProb(high);
+  if (probAtHigh < targetConf) {
+    const terminalSim = simulateGoal(returns, startValue, high, years, targetAmount, 500, inflation, feeDrag, seed);
+    return {
+      required_monthly_contribution: high,
+      achieved_probability: probAtHigh,
+      confidence: targetConf,
+      achievable: false,
+      target_amount: targetAmount,
+      years,
+      start_value: startValue,
+      real_terms: realTerms,
+      inflation,
+      fee_drag: feeDrag,
+      seed,
+      expected_terminal_p50: realTerms ? terminalSim.real_median_final_value : terminalSim.median_final_value
+    };
+  }
 
-    if (simVal < targetAmount) {
-      low = mid;
-    } else {
+  if (getSuccessProb(0) >= targetConf) {
+    const terminalSim = simulateGoal(returns, startValue, 0, years, targetAmount, 500, inflation, feeDrag, seed);
+    return {
+      required_monthly_contribution: 0,
+      achieved_probability: getSuccessProb(0),
+      confidence: targetConf,
+      achievable: true,
+      target_amount: targetAmount,
+      years,
+      start_value: startValue,
+      real_terms: realTerms,
+      inflation,
+      fee_drag: feeDrag,
+      seed,
+      expected_terminal_p50: realTerms ? terminalSim.real_median_final_value : terminalSim.median_final_value
+    };
+  }
+
+  // Bisection loop down to 1 currency unit
+  while (high - low > 1) {
+    const mid = Math.floor((low + high) / 2);
+    const midProb = getSuccessProb(mid);
+    if (midProb >= targetConf) {
       high = mid;
+    } else {
+      low = mid;
     }
-
-    if (high - low < 15) break;
   }
 
-  const finalContribution = Math.round(high);
-  const finalSim = simulateGoal(returns, startValue, finalContribution, years, targetAmount, 500, inflation, feeDrag);
+  const finalContribution = high;
+  const finalProb = getSuccessProb(finalContribution);
+  const finalSim = simulateGoal(returns, startValue, finalContribution, years, targetAmount, 500, inflation, feeDrag, seed);
 
   return {
     required_monthly_contribution: finalContribution,
+    achieved_probability: finalProb,
     confidence: targetConf,
+    achievable: true,
     target_amount: targetAmount,
     years,
     start_value: startValue,
     real_terms: realTerms,
     inflation,
     fee_drag: feeDrag,
+    seed,
     expected_terminal_p50: realTerms ? finalSim.real_median_final_value : finalSim.median_final_value
   };
 }
@@ -1162,313 +1571,605 @@ export function solveRequiredContribution(
 /**
  * Tool 8: suggest_mixes
  * Generates three labelled illustrative asset allocations tailored for Singapore retail investors.
+ * Applies a deterministic horizon glide rule:
+ * - horizon <= 3: shift 40% of equity/reits/gold into gov_backed (60%) and cash (40%)
+ * - horizon 4-5: shift 20%
+ * - horizon 6-14: no change
+ * - horizon >= 15: no change
+ * Renormalises to exactly 1.0.
+ * Descriptions derive percentages dynamically from weights without unsupported claims.
  */
 export function suggestMixes(
   riskLevel: number,
   horizonYears: number
 ): { risk_level: number; horizon_years: number; mixes: SuggestedMix[] } {
   const level = Math.max(1, Math.min(5, Math.round(riskLevel)));
-  const shortHorizon = horizonYears <= 4;
-  const longHorizon = horizonYears >= 15;
 
-  let mix1: SuggestedMix;
-  let mix2: SuggestedMix;
-  let mix3: SuggestedMix;
+  let baseMixes: Array<{
+    id: string;
+    name: string;
+    label: string;
+    rationale: string;
+    risk_rating: string;
+    components: SuggestedMixComponent[];
+  }>;
 
   if (level === 1) {
-    // Very Conservative
-    mix1 = {
-      id: "mix_preservation",
-      name: "Capital Preservation Core",
-      label: "Baseline Match",
-      description: "Maximizes capital protection with heavy allocation to Singapore Government-backed T-bills, SSBs, and high-yield cash.",
-      rationale: "Ideal for short-term goals (downpayments) or investors seeking absolute downside certainty. Mitigates market volatility through AAA-rated sovereign paper.",
-      risk_rating: "Very Low",
-      expected_cagr_estimate: 0.030,
-      components: [
-        { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.25 },
-        { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.45 },
-        { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.20 },
-        { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.05 },
-        { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.05 },
-        { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.00 },
-        { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.00 },
-      ]
-    };
-    mix2 = {
-      id: "mix_pure_cash_sovereign",
-      name: "Zero Market-Risk Fortress",
-      label: "Defensive Certainty",
-      description: "100% fixed income and government guaranteed paper. Zero equity exposure.",
-      rationale: "Guaranteed nominal capital protection. Sacrifices long-term inflation beating potential for zero sequence-of-returns drawdown risk.",
-      risk_rating: "Minimal",
-      expected_cagr_estimate: 0.026,
-      components: [
-        { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.35 },
-        { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.45 },
-        { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.20 },
-        { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.00 },
-        { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.00 },
-        { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.00 },
-        { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.00 },
-      ]
-    };
-    mix3 = {
-      id: "mix_conservative_income",
-      name: "Inflation Buffer Conservative",
-      label: "Mild Growth Tilt",
-      description: "Adds a modest 15% equity & REIT buffer to help outpace Singapore headline inflation over multi-year periods.",
-      rationale: "Modest equity allocation provides dividend income without exposing portfolio to deep market drawdowns.",
-      risk_rating: "Low",
-      expected_cagr_estimate: 0.038,
-      components: [
-        { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.15 },
-        { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.40 },
-        { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.25 },
-        { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.10 },
-        { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.05 },
-        { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.05 },
-        { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.00 },
-      ]
-    };
+    baseMixes = [
+      {
+        id: "mix_preservation",
+        name: "Capital Preservation Allocation",
+        label: "Baseline Match",
+        rationale: "An illustrative mix designed for near-term capital protection, weighted towards Singapore Government-backed T-bills, SSBs, and cash equivalents.",
+        risk_rating: "Very Low",
+        components: [
+          { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.25 },
+          { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.45 },
+          { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.20 },
+          { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.05 },
+          { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.05 },
+          { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.00 },
+          { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.00 },
+        ]
+      },
+      {
+        id: "mix_pure_cash_sovereign",
+        name: "Sovereign & Fixed-Income Allocation",
+        label: "Defensive Allocation",
+        rationale: "An illustrative mix consisting exclusively of sovereign and fixed income assets with zero equity allocation.",
+        risk_rating: "Minimal",
+        components: [
+          { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.35 },
+          { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.45 },
+          { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.20 },
+          { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.00 },
+          { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.00 },
+          { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.00 },
+          { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.00 },
+        ]
+      },
+      {
+        id: "mix_conservative_income",
+        name: "Conservative Income Allocation",
+        label: "Mild Growth Tilt",
+        rationale: "An illustrative mix that incorporates a modest equity and REIT buffer alongside fixed-income instruments.",
+        risk_rating: "Low",
+        components: [
+          { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.15 },
+          { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.40 },
+          { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.25 },
+          { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.10 },
+          { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.05 },
+          { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.05 },
+          { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.00 },
+        ]
+      }
+    ];
   } else if (level === 2) {
-    // Conservative
-    mix1 = {
-      id: "mix_income_stability",
-      name: "Income & Capital Stability",
-      label: "Baseline Match",
-      description: "Conservative mix pairing high fixed income (60%) with stable dividend-yielding Singapore equities and global equities.",
-      rationale: "Balances steady income and defensive buffer with modest capital appreciation for cautious medium-term investors.",
-      risk_rating: "Conservative",
-      expected_cagr_estimate: 0.043,
-      components: [
-        { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.15 },
-        { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.35 },
-        { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.25 },
-        { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.10 },
-        { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.10 },
-        { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.05 },
-        { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.00 },
-      ]
-    };
-    mix2 = {
-      id: "mix_sovereign_income",
-      name: "Singapore Sovereign Heavy",
-      label: "Defensive Certainty",
-      description: "Elevates T-bills, SSBs and investment grade bonds to 75% for maximum drawdown dampening.",
-      rationale: "Higher certainty of reaching target capital with reduced monthly volatility.",
-      risk_rating: "Low",
-      expected_cagr_estimate: 0.035,
-      components: [
-        { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.20 },
-        { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.40 },
-        { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.25 },
-        { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.05 },
-        { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.05 },
-        { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.05 },
-        { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.00 },
-      ]
-    };
-    mix3 = {
-      id: "mix_dividend_yield",
-      name: "Dividend & Gold Hedge",
-      label: "Inflation Shield",
-      description: "Adds 5% physical gold allocation as hedge against geopolitical shock and USD/SGD exchange fluctuations.",
-      rationale: "Gold and real estate provide non-correlated return sources alongside Singapore dividend shares.",
-      risk_rating: "Moderate-Low",
-      expected_cagr_estimate: 0.048,
-      components: [
-        { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.10 },
-        { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.25 },
-        { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.25 },
-        { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.15 },
-        { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
-        { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.05 },
-        { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
-      ]
-    };
+    baseMixes = [
+      {
+        id: "mix_income_stability",
+        name: "Income & Stability Allocation",
+        label: "Baseline Match",
+        rationale: "An illustrative mix balancing fixed-income stability with dividend-yielding Singapore and global equity exposure.",
+        risk_rating: "Conservative",
+        components: [
+          { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.15 },
+          { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.35 },
+          { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.25 },
+          { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.10 },
+          { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.10 },
+          { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.05 },
+          { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.00 },
+        ]
+      },
+      {
+        id: "mix_sovereign_income",
+        name: "Singapore Sovereign Heavy Allocation",
+        label: "Defensive Allocation",
+        rationale: "An illustrative mix prioritizing sovereign bills, bonds, and deposits to moderate equity drawdowns.",
+        risk_rating: "Low",
+        components: [
+          { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.20 },
+          { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.40 },
+          { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.25 },
+          { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.05 },
+          { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.05 },
+          { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.05 },
+          { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.00 },
+        ]
+      },
+      {
+        id: "mix_dividend_yield",
+        name: "Dividend & Real Assets Allocation",
+        label: "Inflation Buffer",
+        rationale: "An illustrative mix pairing dividend-yielding shares and real assets with a core fixed income cushion.",
+        risk_rating: "Moderate-Low",
+        components: [
+          { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.10 },
+          { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.25 },
+          { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.25 },
+          { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.15 },
+          { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
+          { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.05 },
+          { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
+        ]
+      }
+    ];
   } else if (level === 3) {
-    // Balanced (Moderate)
-    mix1 = {
-      id: "mix_sg_balanced",
-      name: "Singapore Classic Balanced",
-      label: "Baseline Match",
-      description: "Institutional 50/50 balance between wealth accumulation assets (global equity, STI, REITs) and preservation assets.",
-      rationale: "The golden standard for medium-to-long term goals (7-15 years). Captures world economic growth while cushioning drawdowns with Singapore fixed income.",
-      risk_rating: "Moderate",
-      expected_cagr_estimate: 0.055,
-      components: [
-        { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.10 },
-        { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.15 },
-        { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.20 },
-        { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.30 },
-        { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
-        { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.05 },
-        { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
-      ]
-    };
-    mix2 = {
-      id: "mix_balanced_defensive",
-      name: "Defensive Balanced Tilt",
-      label: "Higher Certainty",
-      description: "60% fixed income and cash tilt designed to keep maximum drawdown under ~15%.",
-      rationale: "Suitable if investor wants growth exposure but cannot tolerate large portfolio swings or has a tighter time horizon.",
-      risk_rating: "Moderate-Low",
-      expected_cagr_estimate: 0.047,
-      components: [
-        { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.15 },
-        { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.20 },
-        { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.25 },
-        { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.20 },
-        { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.10 },
-        { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.05 },
-        { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
-      ]
-    };
-    mix3 = {
-      id: "mix_balanced_growth",
-      name: "Growth-Weighted Balanced",
-      label: "Growth Focus",
-      description: "70% allocation to growth engines (40% Global Equity VT, 15% STI, 10% REITs, 5% Gold).",
-      rationale: "Lowers monthly contribution requirement to hit goal by harnessing higher compounding returns.",
-      risk_rating: "Moderate-High",
-      expected_cagr_estimate: 0.063,
-      components: [
-        { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.05 },
-        { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.10 },
-        { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.15 },
-        { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.40 },
-        { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
-        { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.10 },
-        { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
-      ]
-    };
+    baseMixes = [
+      {
+        id: "mix_sg_balanced",
+        name: "Singapore Balanced Allocation",
+        label: "Baseline Match",
+        rationale: "An illustrative mix balancing wealth accumulation assets with preservation instruments for medium-to-long term goals.",
+        risk_rating: "Moderate",
+        components: [
+          { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.10 },
+          { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.15 },
+          { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.20 },
+          { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.30 },
+          { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
+          { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.05 },
+          { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
+        ]
+      },
+      {
+        id: "mix_balanced_defensive",
+        name: "Defensive Balanced Allocation",
+        label: "Defensive Buffer",
+        rationale: "An illustrative mix tilted towards sovereign and fixed income assets for investors who prefer moderate equity exposure with lower volatility.",
+        risk_rating: "Moderate-Low",
+        components: [
+          { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.15 },
+          { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.20 },
+          { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.25 },
+          { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.20 },
+          { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.10 },
+          { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.05 },
+          { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
+        ]
+      },
+      {
+        id: "mix_balanced_growth",
+        name: "Growth-Weighted Balanced Allocation",
+        label: "Growth Focus",
+        rationale: "An illustrative mix tilted towards worldwide equities and real estate investment trusts to support capital growth.",
+        risk_rating: "Moderate-High",
+        components: [
+          { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.05 },
+          { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.10 },
+          { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.15 },
+          { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.40 },
+          { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
+          { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.10 },
+          { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
+        ]
+      }
+    ];
   } else if (level === 4) {
-    // Growth
-    mix1 = {
-      id: "mix_global_growth",
-      name: "Global Multi-Asset Growth",
-      label: "Baseline Match",
-      description: "Aggressive multi-asset growth mix with 75% equity, REITs, and real assets.",
-      rationale: "Engineered for 10+ year compounding. Harnesses world equity dynamism with high probability of outpacing Singapore cost of living inflation.",
-      risk_rating: "High",
-      expected_cagr_estimate: 0.068,
-      components: [
-        { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.05 },
-        { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.05 },
-        { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.15 },
-        { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.45 },
-        { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
-        { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.10 },
-        { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
-      ]
-    };
-    mix2 = {
-      id: "mix_growth_cushioned",
-      name: "Cushioned Growth",
-      label: "Stability Tilt",
-      description: "Retains 20% high-quality bonds and 20% SG sovereign/cash to dampen bear market drawdowns.",
-      rationale: "Reduces peak-to-trough drop by ~30% while retaining ~85% of equity upside.",
-      risk_rating: "Moderate-High",
-      expected_cagr_estimate: 0.059,
-      components: [
-        { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.10 },
-        { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.10 },
-        { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.20 },
-        { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.35 },
-        { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
-        { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.05 },
-        { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
-      ]
-    };
-    mix3 = {
-      id: "mix_maximum_equity_tilt",
-      name: "High-Equity Accelerator",
-      label: "Maximum Compounding",
-      description: "85% equity assets (55% Global Equity VT, 15% STI, 10% REITs, 5% Gold).",
-      rationale: "Minimizes the required monthly contribution to hit substantial long-term retirement and FIRE goals.",
-      risk_rating: "Aggressive",
-      expected_cagr_estimate: 0.076,
-      components: [
-        { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.05 },
-        { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.00 },
-        { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.10 },
-        { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.55 },
-        { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
-        { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.10 },
-        { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
-      ]
-    };
+    baseMixes = [
+      {
+        id: "mix_global_growth",
+        name: "Global Multi-Asset Growth Allocation",
+        label: "Baseline Match",
+        rationale: "An illustrative growth mix weighted towards global equities, local blue chips, and REITs for extended compounding horizons.",
+        risk_rating: "High",
+        components: [
+          { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.05 },
+          { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.05 },
+          { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.15 },
+          { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.45 },
+          { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
+          { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.10 },
+          { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
+        ]
+      },
+      {
+        id: "mix_growth_cushioned",
+        name: "Cushioned Growth Allocation",
+        label: "Stability Tilt",
+        rationale: "An illustrative mix retaining a moderate bond and sovereign allocation alongside equity assets.",
+        risk_rating: "Moderate-High",
+        components: [
+          { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.10 },
+          { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.10 },
+          { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.20 },
+          { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.35 },
+          { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
+          { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.05 },
+          { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
+        ]
+      },
+      {
+        id: "mix_maximum_equity_tilt",
+        name: "High-Equity Allocation",
+        label: "High Growth",
+        rationale: "An illustrative allocation prioritizing worldwide equity exposure with minimal defensive drag for multi-decade horizons.",
+        risk_rating: "Aggressive",
+        components: [
+          { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.05 },
+          { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.00 },
+          { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.10 },
+          { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.55 },
+          { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
+          { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.10 },
+          { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
+        ]
+      }
+    ];
   } else {
     // Risk Level 5: Aggressive Growth
-    mix1 = {
-      id: "mix_aggressive_core",
-      name: "Aggressive Global Core",
-      label: "Baseline Match",
-      description: "90% growth assets with high worldwide diversification and local Singapore blue chips.",
-      rationale: "For investors with high risk tolerance and 10-25+ year horizons willing to endure severe market cycles for maximum terminal wealth.",
-      risk_rating: "Aggressive",
-      expected_cagr_estimate: 0.081,
-      components: [
-        { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.05 },
-        { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.00 },
-        { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.05 },
-        { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.60 },
-        { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
-        { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.10 },
-        { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
-      ]
-    };
-    mix2 = {
-      id: "mix_aggressive_hedged",
-      name: "Diversified Aggressive (Bond Buffer)",
-      label: "Volatility Buffer",
-      description: "Maintains 75% equity with a 15% bond cushion to allow rebalancing during equity market panics.",
-      rationale: "Gives dry powder for annual rebalancing into undervalued equities during market crashes.",
-      risk_rating: "High",
-      expected_cagr_estimate: 0.071,
-      components: [
-        { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.05 },
-        { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.05 },
-        { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.15 },
-        { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.50 },
-        { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
-        { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.05 },
-        { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
-      ]
-    };
-    mix3 = {
-      id: "mix_pure_equity_real",
-      name: "100% Equity & Real Assets",
-      label: "Pure Capital Expansion",
-      description: "Zero cash or bond drag. 70% Global Equity VT, 15% STI, 10% REITs, 5% Gold.",
-      rationale: "Maximizes compound growth rate over multi-decade generational wealth horizons.",
-      risk_rating: "Very High",
-      expected_cagr_estimate: 0.088,
-      components: [
-        { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.00 },
-        { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.00 },
-        { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.00 },
-        { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.70 },
-        { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
-        { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.10 },
-        { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
-      ]
-    };
+    baseMixes = [
+      {
+        id: "mix_aggressive_core",
+        name: "Aggressive Global Allocation",
+        label: "Baseline Match",
+        rationale: "An illustrative mix dominated by worldwide and domestic equities for investors seeking long-term capital expansion.",
+        risk_rating: "Aggressive",
+        components: [
+          { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.05 },
+          { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.00 },
+          { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.05 },
+          { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.60 },
+          { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
+          { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.10 },
+          { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
+        ]
+      },
+      {
+        id: "mix_aggressive_hedged",
+        name: "Diversified Aggressive Allocation",
+        label: "Buffer Tilt",
+        rationale: "An illustrative mix retaining an aggregate bond allocation to provide rebalancing liquidity during equity downcycles.",
+        risk_rating: "High",
+        components: [
+          { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.05 },
+          { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.05 },
+          { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.15 },
+          { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.50 },
+          { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
+          { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.05 },
+          { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
+        ]
+      },
+      {
+        id: "mix_pure_equity_real",
+        name: "Equities & Real Assets Allocation",
+        label: "Equity Focus",
+        rationale: "An illustrative mix consisting exclusively of global equities, Singapore stocks, REITs, and gold with zero cash or bond weighting.",
+        risk_rating: "Very High",
+        components: [
+          { asset_class: 'cash', name: 'Cash / Fixed Deposit', default_proxy: 'Cash', is_fixed_rate: true, default_rate: 0.020, weight: 0.00 },
+          { asset_class: 'gov_backed', name: 'Government-Backed (T-Bills / SSB)', default_proxy: 'SSB/T-Bills', is_fixed_rate: true, default_rate: 0.028, weight: 0.00 },
+          { asset_class: 'bonds', name: 'Global / US Aggregate Bonds', default_proxy: 'AGG', is_fixed_rate: false, weight: 0.00 },
+          { asset_class: 'global_equity', name: 'Global Equity', default_proxy: 'VT', is_fixed_rate: false, weight: 0.70 },
+          { asset_class: 'sg_equity', name: 'Singapore Equity (STI)', default_proxy: 'ES3.SI', is_fixed_rate: false, weight: 0.15 },
+          { asset_class: 'reits', name: 'REITs', default_proxy: 'VNQ', is_fixed_rate: false, weight: 0.10 },
+          { asset_class: 'gold', name: 'Gold', default_proxy: 'GLD', is_fixed_rate: false, weight: 0.05 },
+        ]
+      }
+    ];
   }
 
-  // Adjust for horizon nuances
-  if (shortHorizon) {
-    mix1.description += " (Adapted with enhanced capital buffers for short-duration deadline).";
-  } else if (longHorizon) {
-    mix1.description += " (Optimized for multi-decade compound growth and inflation beating).";
+  // Phase 2.1: Deterministic horizon glide rule
+  // - horizon <= 3 years: shift 40% of equity/reits/gold into gov_backed (60%) and cash (40%)
+  // - horizon 4-5 years: shift 20% the same way
+  // - 6-14 years: no change
+  // - >= 15 years: no change
+  let shiftFraction = 0;
+  if (horizonYears <= 3) {
+    shiftFraction = 0.40;
+  } else if (horizonYears <= 5) {
+    shiftFraction = 0.20;
   }
+
+  const equityClasses = new Set(['global_equity', 'sg_equity', 'reits', 'gold']);
+
+  const finalMixes: SuggestedMix[] = baseMixes.map(mix => {
+    const comps = mix.components.map(c => ({ ...c }));
+
+    let combinedEquityWeight = 0;
+    for (const c of comps) {
+      if (equityClasses.has(c.asset_class)) {
+        combinedEquityWeight += c.weight;
+      }
+    }
+
+    const shiftAmount = combinedEquityWeight * shiftFraction;
+    const horizonAdjustmentPct = Math.round(shiftAmount * 1000) / 10;
+
+    if (shiftAmount > 0) {
+      // Reduce equity components proportionally
+      for (const c of comps) {
+        if (equityClasses.has(c.asset_class)) {
+          c.weight = c.weight * (1 - shiftFraction);
+        }
+      }
+
+      // Add to gov_backed (60% of shift) and cash (40% of shift)
+      const govIdx = comps.findIndex(c => c.asset_class === 'gov_backed');
+      const cashIdx = comps.findIndex(c => c.asset_class === 'cash');
+
+      if (govIdx !== -1) {
+        comps[govIdx].weight += 0.60 * shiftAmount;
+      }
+      if (cashIdx !== -1) {
+        comps[cashIdx].weight += 0.40 * shiftAmount;
+      }
+    }
+
+    // Renormalise weights to exactly 1.0 (+/- 1e-9)
+    const sumW = comps.reduce((acc, c) => acc + c.weight, 0);
+    for (const c of comps) {
+      c.weight = c.weight / sumW;
+    }
+
+    // Phase 2.2: Compute neutral description from actual weights
+    let fixedPct = 0;
+    let equityPct = 0;
+    for (const c of comps) {
+      if (c.asset_class === 'cash' || c.asset_class === 'gov_backed' || c.asset_class === 'bonds') {
+        fixedPct += c.weight;
+      } else {
+        equityPct += c.weight;
+      }
+    }
+    const fixedInt = Math.round(fixedPct * 100);
+    const equityInt = 100 - fixedInt;
+
+    let dynamicDesc = "";
+    if (fixedInt >= 70) {
+      dynamicDesc = `Fixed-income heavy: an illustrative mix with about ${fixedInt}% in government-backed paper, cash and bonds, and ${equityInt}% in equities and real assets.`;
+    } else if (fixedInt >= 40) {
+      dynamicDesc = `Balanced distribution: an illustrative mix with about ${fixedInt}% in fixed income and sovereign buffers, and ${equityInt}% in equities and real assets.`;
+    } else {
+      dynamicDesc = `Growth-oriented: an illustrative mix with about ${equityInt}% in global equities, Singapore stocks and real assets, and ${fixedInt}% in defensive instruments.`;
+    }
+
+    return {
+      id: mix.id,
+      name: mix.name,
+      label: mix.label,
+      description: dynamicDesc,
+      rationale: mix.rationale,
+      risk_rating: mix.risk_rating,
+      horizon_adjustment: horizonAdjustmentPct,
+      components: comps
+    };
+  });
 
   return {
     risk_level: level,
     horizon_years: horizonYears,
-    mixes: [mix1, mix2, mix3]
+    mixes: finalMixes
   };
+}
+
+/**
+ * Tool 9: plan_goal
+ * Server-side evaluation tool consolidating fetch, currency conversion,
+ * blended series generation, bootstrap simulation, and required contribution solving.
+ */
+export async function planGoal(args: {
+  start_value: number;
+  monthly_contribution: number;
+  years: number;
+  target_amount: number;
+  confidence?: number;
+  inflation?: number;
+  fee_drag?: number;
+  base_currency?: string;
+  seed?: number;
+  risk_level?: number;
+  components?: BlendedComponent[];
+}): Promise<PlanGoalResult> {
+  const startValue = args.start_value;
+  const monthlyContribution = args.monthly_contribution;
+  const years = args.years;
+  const targetAmount = args.target_amount;
+  const confidence = typeof args.confidence === "number" ? args.confidence : 0.80;
+  const inflation = typeof args.inflation === "number" ? args.inflation : 0.025;
+  const feeDrag = typeof args.fee_drag === "number" ? args.fee_drag : 0.002;
+  const baseCurrency = args.base_currency || "SGD";
+  const seed = typeof args.seed === "number" ? args.seed : 42;
+
+  const mixesToEvaluate: Array<{
+    mix_id: string;
+    name: string;
+    label: string;
+    description: string;
+    rationale: string;
+    risk_rating: string;
+    horizon_adjustment?: number;
+    components: BlendedComponent[];
+  }> = [];
+
+  if (args.components && Array.isArray(args.components) && args.components.length > 0) {
+    mixesToEvaluate.push({
+      mix_id: "custom",
+      name: "Custom Allocation Mix",
+      label: "Bespoke Mix",
+      description: "User-defined asset distribution evaluated against historical market data.",
+      rationale: "Tailored to personal portfolio preferences.",
+      risk_rating: "Custom",
+      components: args.components
+    });
+  } else {
+    const riskLevel = typeof args.risk_level === "number" ? args.risk_level : 3;
+    const suggested = suggestMixes(riskLevel, years);
+    for (const sm of suggested.mixes) {
+      mixesToEvaluate.push({
+        mix_id: sm.id,
+        name: sm.name,
+        label: sm.label,
+        description: sm.description,
+        rationale: sm.rationale,
+        risk_rating: sm.risk_rating,
+        horizon_adjustment: sm.horizon_adjustment,
+        components: sm.components.map(c => ({
+          asset_class: c.asset_class,
+          ticker: c.is_fixed_rate ? undefined : c.default_proxy,
+          fixed_rate: c.is_fixed_rate ? c.default_rate ?? 0.02 : undefined,
+          weight: c.weight
+        }))
+      });
+    }
+  }
+
+  const warnings: string[] = [];
+  const sourcesSet = new Set<string>();
+  let latestAsOf = "";
+
+  const results: PlanGoalMixResult[] = [];
+
+  for (const item of mixesToEvaluate) {
+    // 1. Build blended series
+    const blended = await buildBlendedSeries(item.components, years, "annual", baseCurrency);
+    if (blended.warnings) {
+      for (const w of blended.warnings) warnings.push(w);
+    }
+    if (blended.end_date > latestAsOf) {
+      latestAsOf = blended.end_date;
+    }
+
+    const returnsList = blended.monthly_returns.map(m => m.return);
+
+    // 2. Simulate goal
+    const sim = simulateGoal(
+      returnsList,
+      startValue,
+      monthlyContribution,
+      years,
+      targetAmount,
+      1000,
+      inflation,
+      feeDrag,
+      seed
+    );
+
+    // 3. Solve required contribution
+    const req = solveRequiredContribution(
+      returnsList,
+      startValue,
+      years,
+      targetAmount,
+      confidence,
+      inflation,
+      false, // nominal
+      feeDrag,
+      seed
+    );
+
+    const weightsRecord: Record<string, number> = {};
+    for (const c of item.components) {
+      weightsRecord[c.asset_class] = Math.round(c.weight * 1000) / 1000;
+    }
+
+    results.push({
+      mix_id: item.mix_id,
+      name: item.name,
+      label: item.label,
+      description: item.description,
+      rationale: item.rationale,
+      risk_rating: item.risk_rating,
+      weights: weightsRecord,
+      horizon_adjustment: item.horizon_adjustment,
+      historical_blended_cagr: Math.round(blended.annualized_return * 10000) / 10000,
+      historical_annualized_volatility: Math.round(blended.annualized_volatility * 10000) / 10000,
+      data_window: {
+        start_date: blended.start_date,
+        end_date: blended.end_date,
+        total_months: blended.total_months
+      },
+      probability_of_success: sim.probability_of_success,
+      real_probability_of_success: sim.real_probability_of_success,
+      median_final_value: sim.median_final_value,
+      p10_final: sim.p10_final,
+      p90_final: sim.p90_final,
+      real_median_final_value: sim.real_median_final_value,
+      real_p10_final: sim.real_p10_final,
+      real_p90_final: sim.real_p90_final,
+      yearly_trajectory: sim.trajectories,
+      drawdown_median: sim.drawdown_median,
+      drawdown_p95: sim.drawdown_p95,
+      required_monthly_contribution: req.required_monthly_contribution,
+      achieved_probability: req.achieved_probability,
+      achievable: req.achievable
+    });
+  }
+
+  // Determine sources from history cache or components
+  sourcesSet.add("yahoo");
+
+  return {
+    mixes: results,
+    sources: Array.from(sourcesSet),
+    as_of: latestAsOf || new Date().toISOString().slice(0, 10),
+    warnings: Array.from(new Set(warnings)),
+    disclaimer: STANDARD_DISCLAIMER
+  };
+}
+
+// Validation Helpers
+function validateNumber(val: any, name: string, min?: number, max?: number, integerOnly?: boolean): number {
+  if (typeof val !== "number" || isNaN(val) || !isFinite(val)) {
+    throw new Error(`Invalid argument '${name}': must be a finite number.`);
+  }
+  if (integerOnly && !Number.isInteger(val)) {
+    throw new Error(`Invalid argument '${name}': must be an integer.`);
+  }
+  if (min !== undefined && val < min) {
+    throw new Error(`Invalid argument '${name}': must be >= ${min}. Received: ${val}.`);
+  }
+  if (max !== undefined && val > max) {
+    throw new Error(`Invalid argument '${name}': must be <= ${max}. Received: ${val}.`);
+  }
+  return val;
+}
+
+function validateReturnsArray(returns: any): number[] {
+  if (!Array.isArray(returns) || returns.length < 12 || returns.length > 600) {
+    throw new Error("Invalid argument 'returns': must be an array of 12 to 600 monthly decimal return numbers.");
+  }
+  for (let i = 0; i < returns.length; i++) {
+    const r = returns[i];
+    if (typeof r !== "number" || isNaN(r) || !isFinite(r) || r <= -1) {
+      throw new Error(`Invalid return value at index ${i}: must be a finite number strictly greater than -1. Received: ${r}.`);
+    }
+  }
+  return returns;
+}
+
+function validatePricesArray(prices: any): PricePoint[] {
+  if (!Array.isArray(prices) || prices.length < 2 || prices.length > 600) {
+    throw new Error("Invalid argument 'prices': must be an array of 2 to 600 price points.");
+  }
+  return prices;
+}
+
+function validateComponentsArray(components: any): BlendedComponent[] {
+  if (!Array.isArray(components) || components.length < 1 || components.length > 10) {
+    throw new Error("Invalid argument 'components': must be an array of 1 to 10 component objects.");
+  }
+  let sumWeights = 0;
+  for (let i = 0; i < components.length; i++) {
+    const c = components[i];
+    if (!c || typeof c !== "object") throw new Error(`Invalid component at index ${i}.`);
+    if (typeof c.weight !== "number" || isNaN(c.weight) || !isFinite(c.weight) || c.weight < 0) {
+      throw new Error(`Invalid component weight at index ${i}: must be a finite number >= 0.`);
+    }
+    if (typeof c.fixed_rate === "number") {
+      if (isNaN(c.fixed_rate) || !isFinite(c.fixed_rate) || c.fixed_rate < -0.05 || c.fixed_rate > 0.30) {
+        throw new Error(`Invalid component fixed_rate at index ${i}: must be between -0.05 (-5%) and 0.30 (30%).`);
+      }
+    }
+    sumWeights += c.weight;
+  }
+  if (sumWeights <= 0) {
+    throw new Error("Invalid component weights: sum of weights must be strictly positive.");
+  }
+  return components;
 }
 
 /**
@@ -1494,19 +2195,33 @@ export async function handleMcpPayload(body: any): Promise<any> {
   }
 
   switch (method) {
+    case "ping": {
+      return {
+        jsonrpc: "2.0",
+        id: id ?? null,
+        result: {}
+      };
+    }
+
     case "initialize": {
+      const requestedVersion = params?.protocolVersion;
+      const acceptedVersion =
+        requestedVersion === "2024-11-05" || requestedVersion === "1.0.0"
+          ? requestedVersion
+          : "2024-11-05";
+
       return {
         jsonrpc: "2.0",
         id,
         result: {
-          protocolVersion: "2024-11-05",
+          protocolVersion: acceptedVersion,
           capabilities: {
             tools: { listChanged: false }
           },
           serverInfo: {
             name: "etf-horizon-mcp-server",
-            version: "2.0.0",
-            description: "Goal-based Asset Allocation & Institutional Horizon Analytics Model Context Protocol service"
+            version: "2.1.0",
+            description: "Goal-based Asset Allocation & Horizon Analytics Model Context Protocol service"
           }
         }
       };
@@ -1539,10 +2254,13 @@ export async function handleMcpPayload(body: any): Promise<any> {
 
         switch (toolName) {
           case "get_price_history": {
-            if (!args.ticker) {
-              throw new Error("Missing required argument 'ticker'.");
+            if (!args.ticker || typeof args.ticker !== "string") {
+              throw new Error("Missing or invalid required argument 'ticker'.");
             }
             const years = typeof args.years === "number" ? args.years : 10;
+            if (years !== 5 && years !== 10) {
+              throw new Error("Invalid argument 'years' for get_price_history: must be 5 or 10.");
+            }
             const history = await fetchYahooPriceHistory(args.ticker, years);
             toolOutput = {
               ticker: args.ticker.toUpperCase(),
@@ -1551,113 +2269,152 @@ export async function handleMcpPayload(body: any): Promise<any> {
               dataPoints: history.prices.length,
               adjusted_close_available: history.adjusted_close_available,
               prices: history.prices,
+              source: history.source,
+              as_of: history.as_of,
+              warning: history.warning,
               fee_drag_default: 0.002
             };
             break;
           }
 
           case "compute_metrics": {
-            if (!Array.isArray(args.prices)) {
-              throw new Error("Missing required array argument 'prices'.");
-            }
-            toolOutput = calculateMetrics(args.prices);
+            const prices = validatePricesArray(args.prices);
+            toolOutput = calculateMetrics(prices);
             break;
           }
 
           case "project_scenarios": {
-            if (typeof args.start_value !== "number" || typeof args.base_cagr !== "number") {
-              throw new Error("Arguments 'start_value' and 'base_cagr' must be valid numbers.");
-            }
-            const years = typeof args.years === "number" ? args.years : 10;
-            const contribution = typeof args.monthly_contribution === "number" ? args.monthly_contribution : 500;
-            const feeDrag = typeof args.fee_drag === "number" ? args.fee_drag : 0.002;
-            toolOutput = calculateScenarios(args.start_value, args.base_cagr, years, contribution, feeDrag);
+            const startVal = validateNumber(args.start_value, "start_value", 0);
+            const baseCagr = validateNumber(args.base_cagr, "base_cagr", -0.99, 10.0);
+            const years = typeof args.years === "number" ? validateNumber(args.years, "years", 1, 30, true) : 10;
+            const contribution =
+              typeof args.monthly_contribution === "number"
+                ? validateNumber(args.monthly_contribution, "monthly_contribution", 0)
+                : 500;
+            const feeDrag =
+              typeof args.fee_drag === "number" ? validateNumber(args.fee_drag, "fee_drag", 0, 0.20) : 0.002;
+            toolOutput = calculateScenarios(startVal, baseCagr, years, contribution, feeDrag);
             break;
           }
 
           case "monte_carlo": {
-            if (!Array.isArray(args.prices)) {
-              throw new Error("Missing required array argument 'prices'.");
-            }
-            const startVal = typeof args.start_value === "number" ? args.start_value : 10000;
-            const years = typeof args.years === "number" ? args.years : 10;
-            const contribution = typeof args.monthly_contribution === "number" ? args.monthly_contribution : 500;
-            const paths = typeof args.n_paths === "number" ? args.n_paths : 1000;
-            const feeDrag = typeof args.fee_drag === "number" ? args.fee_drag : 0.002;
-            toolOutput = calculateMonteCarlo(args.prices, startVal, years, contribution, paths, feeDrag);
+            const prices = validatePricesArray(args.prices);
+            const startVal =
+              typeof args.start_value === "number" ? validateNumber(args.start_value, "start_value", 0) : 10000;
+            const years = typeof args.years === "number" ? validateNumber(args.years, "years", 1, 30, true) : 10;
+            const contribution =
+              typeof args.monthly_contribution === "number"
+                ? validateNumber(args.monthly_contribution, "monthly_contribution", 0)
+                : 500;
+            const paths =
+              typeof args.n_paths === "number" ? validateNumber(args.n_paths, "n_paths", 100, 3000, true) : 1000;
+            const feeDrag =
+              typeof args.fee_drag === "number" ? validateNumber(args.fee_drag, "fee_drag", 0, 0.20) : 0.002;
+            const seed = typeof args.seed === "number" ? validateNumber(args.seed, "seed", 0, undefined, true) : 42;
+            toolOutput = calculateMonteCarlo(prices, startVal, years, contribution, paths, feeDrag, seed);
             break;
           }
 
           case "build_blended_series": {
-            if (!Array.isArray(args.components)) {
-              throw new Error("Missing required array argument 'components'.");
-            }
-            const years = typeof args.years === "number" ? args.years : 10;
+            const comps = validateComponentsArray(args.components);
+            const years = typeof args.years === "number" ? validateNumber(args.years, "years", 1, 30, true) : 10;
             const rebalance = args.rebalance || "annual";
-            toolOutput = await buildBlendedSeries(args.components, years, rebalance);
+            const baseCurrency = args.base_currency || "SGD";
+            toolOutput = await buildBlendedSeries(comps, years, rebalance, baseCurrency);
             break;
           }
 
           case "simulate_goal": {
-            if (!Array.isArray(args.returns)) {
-              throw new Error("Missing required array argument 'returns'.");
-            }
-            if (typeof args.start_value !== "number" || typeof args.monthly_contribution !== "number" || typeof args.years !== "number" || typeof args.target_amount !== "number") {
-              throw new Error("Arguments 'start_value', 'monthly_contribution', 'years', and 'target_amount' are required numbers.");
-            }
-            const nPaths = typeof args.n_paths === "number" ? args.n_paths : 1000;
-            const inflation = typeof args.inflation === "number" ? args.inflation : 0.025;
-            const feeDrag = typeof args.fee_drag === "number" ? args.fee_drag : 0.002;
-            toolOutput = simulateGoal(
-              args.returns,
-              args.start_value,
-              args.monthly_contribution,
-              args.years,
-              args.target_amount,
-              nPaths,
-              inflation,
-              feeDrag
-            );
+            const returns = validateReturnsArray(args.returns);
+            const startVal = validateNumber(args.start_value, "start_value", 0);
+            const contribution = validateNumber(args.monthly_contribution, "monthly_contribution", 0);
+            const years = validateNumber(args.years, "years", 1, 30, true);
+            const target = validateNumber(args.target_amount, "target_amount", 1);
+            const nPaths =
+              typeof args.n_paths === "number" ? validateNumber(args.n_paths, "n_paths", 100, 3000, true) : 1000;
+            const inflation =
+              typeof args.inflation === "number" ? validateNumber(args.inflation, "inflation", -0.10, 0.50) : 0.025;
+            const feeDrag =
+              typeof args.fee_drag === "number" ? validateNumber(args.fee_drag, "fee_drag", 0, 0.20) : 0.002;
+            const seed = typeof args.seed === "number" ? validateNumber(args.seed, "seed", 0, undefined, true) : 42;
+
+            toolOutput = simulateGoal(returns, startVal, contribution, years, target, nPaths, inflation, feeDrag, seed);
             break;
           }
 
           case "solve_required_contribution": {
-            if (!Array.isArray(args.returns)) {
-              throw new Error("Missing required array argument 'returns'.");
-            }
-            if (typeof args.start_value !== "number" || typeof args.years !== "number" || typeof args.target_amount !== "number") {
-              throw new Error("Arguments 'start_value', 'years', and 'target_amount' are required numbers.");
-            }
-            const confidence = typeof args.confidence === "number" ? args.confidence : 0.80;
-            const inflation = typeof args.inflation === "number" ? args.inflation : 0.025;
+            const returns = validateReturnsArray(args.returns);
+            const startVal = validateNumber(args.start_value, "start_value", 0);
+            const years = validateNumber(args.years, "years", 1, 30, true);
+            const target = validateNumber(args.target_amount, "target_amount", 1);
+            const confidence =
+              typeof args.confidence === "number" ? validateNumber(args.confidence, "confidence", 0.50, 0.99) : 0.80;
+            const inflation =
+              typeof args.inflation === "number" ? validateNumber(args.inflation, "inflation", -0.10, 0.50) : 0.025;
             const realTerms = !!args.real_terms;
-            const feeDrag = typeof args.fee_drag === "number" ? args.fee_drag : 0.002;
+            const feeDrag =
+              typeof args.fee_drag === "number" ? validateNumber(args.fee_drag, "fee_drag", 0, 0.20) : 0.002;
+            const seed = typeof args.seed === "number" ? validateNumber(args.seed, "seed", 0, undefined, true) : 42;
+
             toolOutput = solveRequiredContribution(
-              args.returns,
-              args.start_value,
-              args.years,
-              args.target_amount,
+              returns,
+              startVal,
+              years,
+              target,
               confidence,
               inflation,
               realTerms,
-              feeDrag
+              feeDrag,
+              seed
             );
             break;
           }
 
           case "suggest_mixes": {
-            if (typeof args.risk_level !== "number" || typeof args.horizon_years !== "number") {
-              throw new Error("Arguments 'risk_level' and 'horizon_years' must be numbers.");
-            }
-            toolOutput = suggestMixes(args.risk_level, args.horizon_years);
+            const riskLevel = validateNumber(args.risk_level, "risk_level", 1, 5);
+            const horizon = validateNumber(args.horizon_years, "horizon_years", 1, 30, true);
+            toolOutput = suggestMixes(riskLevel, horizon);
+            break;
+          }
+
+          case "plan_goal": {
+            const startVal = validateNumber(args.start_value, "start_value", 0);
+            const contribution = validateNumber(args.monthly_contribution, "monthly_contribution", 0);
+            const years = validateNumber(args.years, "years", 1, 30, true);
+            const target = validateNumber(args.target_amount, "target_amount", 1);
+            const confidence =
+              typeof args.confidence === "number" ? validateNumber(args.confidence, "confidence", 0.50, 0.99) : 0.80;
+            const inflation =
+              typeof args.inflation === "number" ? validateNumber(args.inflation, "inflation", -0.10, 0.50) : 0.025;
+            const feeDrag =
+              typeof args.fee_drag === "number" ? validateNumber(args.fee_drag, "fee_drag", 0, 0.20) : 0.002;
+            const baseCurrency = args.base_currency || "SGD";
+            const seed = typeof args.seed === "number" ? validateNumber(args.seed, "seed", 0, undefined, true) : 42;
+            const riskLevel = typeof args.risk_level === "number" ? validateNumber(args.risk_level, "risk_level", 1, 5) : undefined;
+            const components = args.components ? validateComponentsArray(args.components) : undefined;
+
+            toolOutput = await planGoal({
+              start_value: startVal,
+              monthly_contribution: contribution,
+              years,
+              target_amount: target,
+              confidence,
+              inflation,
+              fee_drag: feeDrag,
+              base_currency: baseCurrency,
+              seed,
+              risk_level: riskLevel,
+              components
+            });
             break;
           }
 
           default:
+            // Phase 4.1: Unknown tool name returns JSON-RPC error code -32602
             return {
               jsonrpc: "2.0",
               id,
-              error: { code: -32601, message: `Tool '${toolName}' not found.` }
+              error: { code: -32602, message: `Tool '${toolName}' not found.` }
             };
         }
 
@@ -1742,6 +2499,41 @@ export default async function handler(req: any, res: any) {
     }
   }
 
+  // Phase 4.1: Handle JSON-RPC batch (array) requests
+  if (Array.isArray(body)) {
+    if (body.length === 0) {
+      return res.status(200).json({
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32600, message: "Invalid Request: Batch request cannot be empty." }
+      });
+    }
+
+    const responses: any[] = [];
+    for (const item of body) {
+      if (item && typeof item.method === "string" && item.method.startsWith("notifications/")) {
+        // Notification in batch produces no entry
+        continue;
+      }
+      const resp = await handleMcpPayload(item);
+      if (resp !== null) {
+        responses.push(resp);
+      }
+    }
+
+    if (responses.length === 0) {
+      return res.status(202).end();
+    }
+    return res.status(200).json(responses);
+  }
+
+  // Phase 4.1: Handle single notifications (any method starting with "notifications/")
+  if (body && typeof body.method === "string" && body.method.startsWith("notifications/")) {
+    return res.status(202).end();
+  }
+
   const responsePayload = await handleMcpPayload(body);
   return res.status(200).json(responsePayload);
 }
+
+export { handler };

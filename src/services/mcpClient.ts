@@ -318,7 +318,8 @@ class McpClientService {
       prices?: Array<{ date: string; close: number }>;
     }>,
     years: number = 10,
-    rebalance: string = 'annual'
+    rebalance: string = 'annual',
+    baseCurrency: string = 'SGD'
   ) {
     return this.callTool<{
       monthly_returns: Array<{ date: string; return: number; index_value: number }>;
@@ -326,14 +327,21 @@ class McpClientService {
       annualized_volatility: number;
       max_drawdown: number;
       total_months: number;
+      start_date?: string;
+      end_date?: string;
+      aligned_months?: number;
+      base_currency?: string;
+      warnings?: string[];
       components_summary: Array<{
         asset_class: string;
         identifier: string;
         weight: number;
         cagr: number;
         volatility: number;
+        currency?: string;
+        fx_applied?: boolean;
       }>;
-    }>('build_blended_series', { components, years, rebalance });
+    }>('build_blended_series', { components, years, rebalance, base_currency: baseCurrency });
   }
 
   public async simulateGoal(
@@ -344,7 +352,8 @@ class McpClientService {
     targetAmount: number,
     nPaths: number = 1000,
     inflation: number = 0.025,
-    feeDrag: number = 0.002
+    feeDrag: number = 0.002,
+    seed: number = 42
   ) {
     return this.callTool<{
       probability_of_success: number;
@@ -357,12 +366,15 @@ class McpClientService {
       real_p10_final: number;
       real_p50_final: number;
       real_p90_final: number;
+      drawdown_median?: number;
+      drawdown_p95?: number;
       worst_case_drawdown: number;
       total_contributed: number;
       target_amount: number;
       years: number;
       inflation: number;
       fee_drag: number;
+      seed?: number;
       trajectories: Array<{
         year: number;
         p10: number;
@@ -381,7 +393,8 @@ class McpClientService {
       target_amount: targetAmount,
       n_paths: nPaths,
       inflation,
-      fee_drag: feeDrag
+      fee_drag: feeDrag,
+      seed
     });
   }
 
@@ -393,17 +406,21 @@ class McpClientService {
     confidence: number = 0.80,
     inflation: number = 0.025,
     realTerms: boolean = false,
-    feeDrag: number = 0.002
+    feeDrag: number = 0.002,
+    seed: number = 42
   ) {
     return this.callTool<{
       required_monthly_contribution: number;
+      achieved_probability?: number;
       confidence: number;
+      achievable?: boolean;
       target_amount: number;
       years: number;
       start_value: number;
       real_terms: boolean;
       inflation: number;
       fee_drag: number;
+      seed?: number;
       expected_terminal_p50: number;
     }>('solve_required_contribution', {
       returns,
@@ -413,7 +430,8 @@ class McpClientService {
       confidence,
       inflation,
       real_terms: realTerms,
-      fee_drag: feeDrag
+      fee_drag: feeDrag,
+      seed
     });
   }
 
@@ -428,7 +446,7 @@ class McpClientService {
         description: string;
         rationale: string;
         risk_rating: string;
-        expected_cagr_estimate: number;
+        horizon_adjustment?: number;
         components: Array<{
           asset_class: any;
           name: string;
@@ -439,6 +457,72 @@ class McpClientService {
         }>;
       }>;
     }>('suggest_mixes', { risk_level: riskLevel, horizon_years: horizonYears });
+  }
+
+  public async planGoal(args: {
+    start_value: number;
+    monthly_contribution: number;
+    years: number;
+    target_amount: number;
+    confidence?: number;
+    inflation?: number;
+    fee_drag?: number;
+    base_currency?: string;
+    seed?: number;
+    risk_level?: number;
+    components?: Array<{
+      asset_class: string;
+      ticker?: string;
+      fixed_rate?: number;
+      weight: number;
+    }>;
+  }) {
+    return this.callTool<{
+      mixes: Array<{
+        mix_id: string;
+        name: string;
+        label: string;
+        description: string;
+        rationale: string;
+        risk_rating: string;
+        weights: Record<string, number>;
+        horizon_adjustment?: number;
+        historical_blended_cagr: number;
+        historical_annualized_volatility: number;
+        data_window: {
+          start_date: string;
+          end_date: string;
+          total_months: number;
+        };
+        probability_of_success: number;
+        real_probability_of_success: number;
+        median_final_value: number;
+        p10_final: number;
+        p90_final: number;
+        real_median_final_value: number;
+        real_p10_final: number;
+        real_p90_final: number;
+        yearly_trajectory: Array<{
+          year: number;
+          p10: number;
+          p50: number;
+          p90: number;
+          real_p10: number;
+          real_p50: number;
+          real_p90: number;
+          totalContributed: number;
+        }>;
+        drawdown_median: number;
+        drawdown_p95: number;
+        required_monthly_contribution: number;
+        achieved_probability: number;
+        achievable: boolean;
+      }>;
+      sources: string[];
+      as_of: string;
+      warnings: string[];
+      disclaimer: string;
+    }>('plan_goal', args);
   }
 }
 

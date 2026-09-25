@@ -178,6 +178,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSimulatingCustom, setIsSimulatingCustom] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [mcpStatus, setMcpStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
   const [dataSource, setDataSource] = useState<'api' | 'csv' | 'benchmark'>('api');
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
@@ -201,99 +202,116 @@ export default function App() {
 
   /**
    * Run Goal Analytics Pipeline:
-   * 1. Calls suggest_mixes(riskLevel, years)
-   * 2. For each mix, calls build_blended_series, simulate_goal, solve_required_contribution
-   * 3. Runs the same toolchain for the custom mix
+   * Uses Phase 4.2 plan_goal server-side tool consolidation for the 3 suggested mixes
+   * and any user-configured custom mix.
    */
   const runGoalAnalyticsPipeline = useCallback(async () => {
     setIsLoading(true);
     setErrorMessage(null);
 
     try {
-      // 1. MCP suggest_mixes tool
-      const suggested = await mcpClient.suggestMixes(riskLevel, years);
-      const mixes = suggested?.mixes || [];
+      // 1. Unified MCP plan_goal tool call
+      const planRes = await mcpClient.planGoal({
+        start_value: startValue,
+        monthly_contribution: monthlyContribution,
+        years,
+        target_amount: targetAmount,
+        confidence: 0.80,
+        inflation,
+        fee_drag: feeDrag,
+        base_currency: currency,
+        seed: 42,
+        risk_level: riskLevel
+      });
 
-      const processedMixes: MixAnalyticsState[] = [];
+      if (planRes?.warnings && planRes.warnings.length > 0) {
+        setWarnings(planRes.warnings);
+      } else {
+        setWarnings([]);
+      }
 
-      for (let i = 0; i < mixes.length; i++) {
-        const sm = mixes[i];
+      const mixes = planRes?.mixes || [];
+      const processedMixes: MixAnalyticsState[] = mixes.map((pm, idx) => {
         const weightsRecord: Record<AssetClassKey, number> = {
-          cash: 0,
-          gov_backed: 0,
-          bonds: 0,
-          global_equity: 0,
-          sg_equity: 0,
-          reits: 0,
-          gold: 0
+          cash: pm.weights['cash'] ?? 0,
+          gov_backed: pm.weights['gov_backed'] ?? 0,
+          bonds: pm.weights['bonds'] ?? 0,
+          global_equity: pm.weights['global_equity'] ?? 0,
+          sg_equity: pm.weights['sg_equity'] ?? 0,
+          reits: pm.weights['reits'] ?? 0,
+          gold: pm.weights['gold'] ?? 0
         };
 
-        const componentsPayload = sm.components.map(comp => {
-          const key = comp.asset_class as AssetClassKey;
-          weightsRecord[key] = comp.weight;
-          const cfg = assetConfigs[key] || DEFAULT_ASSET_CONFIGS[key];
-
-          if (cfg.isFixedRate) {
-            return {
-              asset_class: key,
-              fixed_rate: cfg.fixedRate ?? 0.02,
-              weight: comp.weight
-            };
-          } else {
-            return {
-              asset_class: key,
-              ticker: cfg.currentProxy,
-              weight: comp.weight
-            };
-          }
-        });
-
-        // 2. MCP build_blended_series tool
-        const blended = await mcpClient.buildBlendedSeries(componentsPayload, years, 'annual');
-        const returnsList = blended.monthly_returns.map(m => m.return);
-
-        // 3. MCP simulate_goal tool (6-month block bootstrap)
-        const sim = await mcpClient.simulateGoal(
-          returnsList,
-          startValue,
-          monthlyContribution,
-          years,
-          targetAmount,
-          1000,
-          inflation,
-          feeDrag
-        );
-
-        // 4. MCP solve_required_contribution tool (bisection solver)
-        const req = await mcpClient.solveRequiredContribution(
-          returnsList,
-          startValue,
-          years,
-          targetAmount,
-          0.80,
-          inflation,
-          isRealTerms,
-          feeDrag
-        );
-
-        processedMixes.push({
-          mixId: `mix_${i + 1}`,
-          mixName: sm.name,
-          mixLabel: sm.label,
-          description: sm.description,
-          rationale: sm.rationale,
-          riskRating: sm.risk_rating,
+        return {
+          mixId: `mix_${idx + 1}`,
+          mixName: pm.name,
+          mixLabel: pm.label,
+          description: pm.description,
+          rationale: pm.rationale,
+          riskRating: pm.risk_rating,
           weights: weightsRecord,
-          blendedSeries: blended,
-          simulation: sim,
-          requiredContribution: req,
+          blendedSeries: {
+            monthly_returns: [],
+            annualized_return: pm.historical_blended_cagr,
+            annualized_volatility: pm.historical_annualized_volatility,
+            max_drawdown: pm.drawdown_p95,
+            total_months: pm.data_window?.total_months ?? (years * 12),
+            start_date: pm.data_window?.start_date,
+            end_date: pm.data_window?.end_date,
+            aligned_months: pm.data_window?.total_months,
+            base_currency: currency,
+            components_summary: (Object.keys(weightsRecord) as AssetClassKey[]).map(k => ({
+              asset_class: k,
+              identifier: k,
+              weight: weightsRecord[k],
+              cagr: pm.historical_blended_cagr,
+              volatility: pm.historical_annualized_volatility,
+              currency: currency,
+              fx_applied: false
+            }))
+          },
+          simulation: {
+            probability_of_success: pm.probability_of_success,
+            real_probability_of_success: pm.real_probability_of_success,
+            median_final_value: pm.median_final_value,
+            real_median_final_value: pm.real_median_final_value,
+            p10_final: pm.p10_final,
+            p50_final: pm.median_final_value,
+            p90_final: pm.p90_final,
+            real_p10_final: pm.real_p10_final,
+            real_p50_final: pm.real_median_final_value,
+            real_p90_final: pm.real_p90_final,
+            drawdown_median: pm.drawdown_median,
+            drawdown_p95: pm.drawdown_p95,
+            worst_case_drawdown: pm.drawdown_p95,
+            total_contributed: Math.round(startValue + monthlyContribution * 12 * years),
+            target_amount: targetAmount,
+            years,
+            inflation,
+            fee_drag: feeDrag,
+            seed: 42,
+            trajectories: pm.yearly_trajectory || []
+          },
+          requiredContribution: {
+            required_monthly_contribution: pm.required_monthly_contribution,
+            achieved_probability: pm.achieved_probability,
+            confidence: 0.80,
+            achievable: pm.achievable,
+            target_amount: targetAmount,
+            years,
+            start_value: startValue,
+            real_terms: isRealTerms,
+            inflation,
+            fee_drag: feeDrag,
+            expected_terminal_p50: pm.median_final_value
+          },
           isLoading: false
-        });
-      }
+        };
+      });
 
       setMixStates(processedMixes);
 
-      // Process Custom Mix
+      // Process Custom Mix via planGoal if any weight > 0
       const customPayload = (Object.keys(customWeights) as AssetClassKey[])
         .filter(k => customWeights[k] > 0)
         .map(key => {
@@ -314,44 +332,79 @@ export default function App() {
         });
 
       if (customPayload.length > 0) {
-        const customBlended = await mcpClient.buildBlendedSeries(customPayload, years, 'annual');
-        const customReturns = customBlended.monthly_returns.map(m => m.return);
-
-        const customSim = await mcpClient.simulateGoal(
-          customReturns,
-          startValue,
-          monthlyContribution,
+        const customPlanRes = await mcpClient.planGoal({
+          start_value: startValue,
+          monthly_contribution: monthlyContribution,
           years,
-          targetAmount,
-          1000,
+          target_amount: targetAmount,
+          confidence: 0.80,
           inflation,
-          feeDrag
-        );
-
-        const customReq = await mcpClient.solveRequiredContribution(
-          customReturns,
-          startValue,
-          years,
-          targetAmount,
-          0.80,
-          inflation,
-          isRealTerms,
-          feeDrag
-        );
-
-        setCustomMixState({
-          mixId: 'custom',
-          mixName: 'Custom Mix Allocation',
-          mixLabel: 'Bespoke Blend',
-          description: 'Your user-customized asset class distribution.',
-          rationale: 'Individually weighted to match personal return and risk preferences.',
-          riskRating: 'Custom',
-          weights: { ...customWeights },
-          blendedSeries: customBlended,
-          simulation: customSim,
-          requiredContribution: customReq,
-          isLoading: false
+          fee_drag: feeDrag,
+          base_currency: currency,
+          seed: 42,
+          components: customPayload
         });
+
+        if (customPlanRes?.mixes && customPlanRes.mixes.length > 0) {
+          const cpm = customPlanRes.mixes[0];
+          setCustomMixState({
+            mixId: 'custom',
+            mixName: 'Custom Mix Allocation',
+            mixLabel: 'Bespoke Blend',
+            description: cpm.description,
+            rationale: cpm.rationale,
+            riskRating: 'Custom',
+            weights: { ...customWeights },
+            blendedSeries: {
+              monthly_returns: [],
+              annualized_return: cpm.historical_blended_cagr,
+              annualized_volatility: cpm.historical_annualized_volatility,
+              max_drawdown: cpm.drawdown_p95,
+              total_months: cpm.data_window?.total_months ?? (years * 12),
+              start_date: cpm.data_window?.start_date,
+              end_date: cpm.data_window?.end_date,
+              aligned_months: cpm.data_window?.total_months,
+              base_currency: currency,
+              components_summary: []
+            },
+            simulation: {
+              probability_of_success: cpm.probability_of_success,
+              real_probability_of_success: cpm.real_probability_of_success,
+              median_final_value: cpm.median_final_value,
+              real_median_final_value: cpm.real_median_final_value,
+              p10_final: cpm.p10_final,
+              p50_final: cpm.median_final_value,
+              p90_final: cpm.p90_final,
+              real_p10_final: cpm.real_p10_final,
+              real_p50_final: cpm.real_median_final_value,
+              real_p90_final: cpm.real_p90_final,
+              drawdown_median: cpm.drawdown_median,
+              drawdown_p95: cpm.drawdown_p95,
+              worst_case_drawdown: cpm.drawdown_p95,
+              total_contributed: Math.round(startValue + monthlyContribution * 12 * years),
+              target_amount: targetAmount,
+              years,
+              inflation,
+              fee_drag: feeDrag,
+              seed: 42,
+              trajectories: cpm.yearly_trajectory || []
+            },
+            requiredContribution: {
+              required_monthly_contribution: cpm.required_monthly_contribution,
+              achieved_probability: cpm.achieved_probability,
+              confidence: 0.80,
+              achievable: cpm.achievable,
+              target_amount: targetAmount,
+              years,
+              start_value: startValue,
+              real_terms: isRealTerms,
+              inflation,
+              fee_drag: feeDrag,
+              expected_terminal_p50: cpm.median_final_value
+            },
+            isLoading: false
+          });
+        }
       }
     } catch (err: any) {
       console.error('Goal analytics pipeline error:', err);
@@ -362,6 +415,7 @@ export default function App() {
   }, [
     riskLevel,
     years,
+    currency,
     assetConfigs,
     startValue,
     monthlyContribution,
@@ -661,6 +715,30 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* Data Honesty Warnings Banner (Phase 3.1) */}
+        {warnings && warnings.length > 0 && (
+          <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3.5 text-xs text-blue-900 space-y-1">
+            <div className="flex items-center gap-2 font-semibold">
+              <Info className="h-4 w-4 text-blue-600 shrink-0" />
+              <span>Data Engine Transparency & Fallback Disclosures:</span>
+            </div>
+            <ul className="list-disc list-inside space-y-0.5 pl-6 font-mono text-[11px] text-blue-800">
+              {warnings.map((w, idx) => (
+                <li key={idx}>{w}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Fee Drag & Methodology Disclosure (Phase 3.4) */}
+        <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-slate-100/80 border border-slate-200 rounded-lg text-[11px] text-slate-600 font-mono">
+          <div className="flex items-center gap-2">
+            <span className="h-1.5 w-1.5 rounded-full bg-blue-600" />
+            <span>Assumptions: 0.20% p.a. fee drag modeled on all returns • Block bootstrap simulation (Mulberry32 seed: 42)</span>
+          </div>
+          <span className="text-slate-500">Not financial advice. Past performance is no guarantee of future returns.</span>
+        </div>
 
         {/* VIEW MODE 1: GOAL ALLOCATION ILLUSTRATOR */}
         {viewMode === 'goal_allocation' && (
