@@ -54,16 +54,16 @@ export const Controls: React.FC<ControlsProps> = ({
   };
 
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 shadow-xl backdrop-blur-sm">
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
+    <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         {/* Ticker Selector Deck */}
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider mr-1">
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-1">
             Focus ETF:
           </span>
 
           {/* Popular Ticker Quick Pills */}
-          <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-950/80 rounded-lg border border-slate-800">
+          <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-100 rounded-lg border border-slate-200">
             {POPULAR_TICKERS.map((t) => {
               const isActive = ticker.toUpperCase() === t.symbol;
               return (
@@ -73,8 +73,8 @@ export const Controls: React.FC<ControlsProps> = ({
                   onClick={() => onTickerChange(t.symbol)}
                   className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-all whitespace-nowrap ${
                     isActive
-                      ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/30'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
                   }`}
                   title={t.name}
                 >
@@ -92,14 +92,14 @@ export const Controls: React.FC<ControlsProps> = ({
                 placeholder="Enter ticker (e.g. VT, AAPL)..."
                 value={customInput}
                 onChange={(e) => setCustomInput(e.target.value.toUpperCase())}
-                className="w-40 sm:w-48 h-8 pl-7 pr-2 text-xs font-mono font-medium text-slate-200 bg-slate-950/90 border border-slate-800 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                className="w-40 sm:w-48 h-8 pl-7 pr-2 text-xs font-mono font-medium text-slate-900 bg-white border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 shadow-xs"
               />
-              <Search className="absolute left-2 h-3.5 w-3.5 text-slate-500 pointer-events-none" />
+              <Search className="absolute left-2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
             </div>
             {customInput.trim() && (
               <button
                 type="submit"
-                className="ml-1.5 h-8 px-3 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-500 transition-colors shadow-sm"
+                className="ml-1.5 h-8 px-3 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors shadow-xs"
               >
                 Set Focus
               </button>
@@ -107,25 +107,25 @@ export const Controls: React.FC<ControlsProps> = ({
           </form>
 
           {/* Currently selected indicator */}
-          <span className="text-xs font-mono px-2.5 py-1 bg-blue-950/80 border border-blue-700/80 text-blue-300 rounded-md flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
+          <span className="text-xs font-mono px-2.5 py-1 bg-blue-50 border border-blue-200 text-blue-700 rounded-md flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-blue-600 animate-pulse" />
             <span>Active: {ticker.toUpperCase()}</span>
           </span>
         </div>
 
         {/* History Lookback Length */}
         <div className="flex items-center gap-3">
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
             History Horizon:
           </span>
-          <div className="flex items-center p-1 bg-slate-950/80 rounded-lg border border-slate-800">
+          <div className="flex items-center p-1 bg-slate-100 rounded-lg border border-slate-200">
             <button
               type="button"
               onClick={() => onYearsChange(5)}
               className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all whitespace-nowrap ${
                 years === 5
-                  ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/30'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               5 Years
@@ -135,8 +135,8 @@ export const Controls: React.FC<ControlsProps> = ({
               onClick={() => onYearsChange(10)}
               className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all whitespace-nowrap ${
                 years === 10
-                  ? 'bg-blue-600 text-white shadow-sm shadow-blue-600/30'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               10 Years
@@ -150,15 +150,15 @@ export const Controls: React.FC<ControlsProps> = ({
         {/* Initial Amount Input */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs">
-            <label htmlFor="initial-amount" className="font-semibold text-slate-300">
+            <label htmlFor="initial-amount" className="font-semibold text-slate-700">
               Initial Capital ({currencySymbol})
             </label>
-            <span className="font-mono text-blue-400 font-semibold">
+            <span className="font-mono text-blue-600 font-semibold">
               {currencySymbol}{initialAmount.toLocaleString()}
             </span>
           </div>
 
-          <div className="relative rounded-lg border border-slate-800 bg-slate-950/80 focus-within:border-blue-500 transition-colors">
+          <div className="relative rounded-lg border border-slate-300 bg-white focus-within:border-blue-500 transition-colors shadow-xs">
             <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 text-xs font-mono">
               {currencySymbol}
             </span>
@@ -169,7 +169,7 @@ export const Controls: React.FC<ControlsProps> = ({
               step="1000"
               value={initialAmount}
               onChange={(e) => onInitialAmountChange(Math.max(0, Number(e.target.value)))}
-              className="w-full pl-8 pr-3 py-2 text-sm font-mono font-medium text-white bg-transparent rounded-lg focus:outline-none"
+              className="w-full pl-8 pr-3 py-2 text-sm font-mono font-medium text-slate-900 bg-transparent rounded-lg focus:outline-none"
             />
           </div>
 
@@ -182,8 +182,8 @@ export const Controls: React.FC<ControlsProps> = ({
                 onClick={() => onInitialAmountChange(amt)}
                 className={`px-2 py-0.5 text-[11px] font-mono rounded border transition-colors ${
                   initialAmount === amt
-                    ? 'bg-blue-950 border-blue-800 text-blue-300 font-semibold'
-                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                    ? 'bg-blue-50 border-blue-300 text-blue-700 font-semibold'
+                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                 }`}
               >
                 {currencySymbol}{(amt / 1000).toFixed(0)}k
@@ -195,15 +195,15 @@ export const Controls: React.FC<ControlsProps> = ({
         {/* Monthly Contribution Input */}
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs">
-            <label htmlFor="monthly-contribution" className="font-semibold text-slate-300">
+            <label htmlFor="monthly-contribution" className="font-semibold text-slate-700">
               Monthly Contribution ({currencySymbol}/mo)
             </label>
-            <span className="font-mono text-blue-400 font-semibold">
+            <span className="font-mono text-blue-600 font-semibold">
               {currencySymbol}{monthlyContribution.toLocaleString()}/mo
             </span>
           </div>
 
-          <div className="relative rounded-lg border border-slate-800 bg-slate-950/80 focus-within:border-blue-500 transition-colors">
+          <div className="relative rounded-lg border border-slate-300 bg-white focus-within:border-blue-500 transition-colors shadow-xs">
             <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400 text-xs font-mono">
               {currencySymbol}
             </span>
@@ -214,7 +214,7 @@ export const Controls: React.FC<ControlsProps> = ({
               step="100"
               value={monthlyContribution}
               onChange={(e) => onMonthlyContributionChange(Math.max(0, Number(e.target.value)))}
-              className="w-full pl-8 pr-3 py-2 text-sm font-mono font-medium text-white bg-transparent rounded-lg focus:outline-none"
+              className="w-full pl-8 pr-3 py-2 text-sm font-mono font-medium text-slate-900 bg-transparent rounded-lg focus:outline-none"
             />
           </div>
 
@@ -227,8 +227,8 @@ export const Controls: React.FC<ControlsProps> = ({
                 onClick={() => onMonthlyContributionChange(contrib)}
                 className={`px-2 py-0.5 text-[11px] font-mono rounded border transition-colors ${
                   monthlyContribution === contrib
-                    ? 'bg-blue-950 border-blue-800 text-blue-300 font-semibold'
-                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                    ? 'bg-blue-50 border-blue-300 text-blue-700 font-semibold'
+                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                 }`}
               >
                 {currencySymbol}{contrib}
@@ -241,10 +241,10 @@ export const Controls: React.FC<ControlsProps> = ({
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-1.5">
-              <Sliders className="h-3.5 w-3.5 text-blue-400" />
-              <span className="font-semibold text-slate-300">Base CAGR Adjustment</span>
+              <Sliders className="h-3.5 w-3.5 text-blue-600" />
+              <span className="font-semibold text-slate-700">Base CAGR Adjustment</span>
             </div>
-            <span className="font-mono font-semibold text-slate-200">
+            <span className="font-mono font-semibold text-slate-900">
               {cagrAdjustment > 0 ? `+${(cagrAdjustment * 100).toFixed(0)}%` : `${(cagrAdjustment * 100).toFixed(0)}%`}
             </span>
           </div>
@@ -257,7 +257,7 @@ export const Controls: React.FC<ControlsProps> = ({
               step="0.05"
               value={cagrAdjustment}
               onChange={(e) => onCagrAdjustmentChange(parseFloat(e.target.value))}
-              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+              className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
             />
             <div className="flex justify-between text-[10px] font-mono text-slate-500 pt-1">
               <span>-50% (Bearish)</span>
@@ -266,13 +266,13 @@ export const Controls: React.FC<ControlsProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center justify-between pt-0.5 text-[11px] text-slate-400">
+          <div className="flex items-center justify-between pt-0.5 text-[11px] text-slate-500">
             <span>Sensitizes 10Y projection rates</span>
             {cagrAdjustment !== 0 && (
               <button
                 type="button"
                 onClick={() => onCagrAdjustmentChange(0)}
-                className="text-blue-400 hover:underline text-[10px] font-mono"
+                className="text-blue-600 hover:underline text-[10px] font-mono font-medium"
               >
                 Reset to 0%
               </button>

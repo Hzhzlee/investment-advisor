@@ -429,31 +429,31 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
   const formatPct = (val: number) => `${(val * 100).toFixed(2)}%`;
 
   return (
-    <section id="comparative" className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 shadow-xl backdrop-blur-sm space-y-6">
+    <section id="comparative" className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs space-y-6">
       {/* Chart Header & Controls */}
       <div>
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-4">
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
+              <h2 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight font-display">
                 Multi-Ticker 10-Year Horizon & Performance Comparison
               </h2>
             </div>
-            <p className="text-xs text-slate-400 mt-0.5">
+            <p className="text-xs text-slate-500 mt-0.5">
               Side-by-side performance trajectories and wealth projections across 3 to 4 selected ETF benchmarks.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             {/* View Mode Toggle */}
-            <div className="flex items-center p-1 bg-slate-950 rounded-lg border border-slate-800 text-xs">
+            <div className="flex items-center p-1 bg-slate-100 rounded-lg border border-slate-200 text-xs">
               <button
                 type="button"
                 onClick={() => setChartViewMode('forward_projections')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded font-medium transition-all ${
                   chartViewMode === 'forward_projections'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <DollarSign className="h-3.5 w-3.5" />
@@ -464,8 +464,8 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
                 onClick={() => setChartViewMode('historical_indexed')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded font-medium transition-all ${
                   chartViewMode === 'historical_indexed'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
                 <TrendingUp className="h-3.5 w-3.5" />
@@ -479,8 +479,8 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
               onClick={() => setUseDynamicScale(!useDynamicScale)}
               className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-mono rounded-md border transition-colors ${
                 useDynamicScale
-                  ? 'bg-blue-950/80 border-blue-700 text-blue-300'
-                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                  ? 'bg-blue-50 border-blue-300 text-blue-700'
+                  : 'bg-white border-slate-200 text-slate-600 hover:text-slate-900'
               }`}
               title="Toggle dynamic vertical scaling based on actual price values"
             >
@@ -491,10 +491,10 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
         </div>
 
         {/* Ticker Management Deck */}
-        <div className="space-y-3 pb-4 border-b border-slate-800/80">
+        <div className="space-y-3 pb-4 border-b border-slate-200">
           {/* Active Comparison Chips & Direct Ticker Search */}
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider mr-1">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-1">
               Active Tickers ({selectedTickers.length}/4):
             </span>
 
@@ -506,8 +506,8 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
                   key={t}
                   className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono font-medium rounded-md border transition-all ${
                     isPrimary
-                      ? 'bg-blue-950 border-blue-600 text-white shadow-sm shadow-blue-500/30 ring-1 ring-blue-500/50'
-                      : 'bg-slate-950 border-slate-800 text-slate-200 hover:border-slate-700'
+                      ? 'bg-blue-50 border-blue-500 text-blue-900 shadow-xs ring-1 ring-blue-500/40'
+                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-300'
                   }`}
                 >
                   <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
@@ -520,12 +520,12 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
                     {t}
                   </button>
                   {isPrimary && (
-                    <span className="text-[10px] text-blue-400 font-sans">Focus</span>
+                    <span className="text-[10px] text-blue-600 font-sans font-semibold">Focus</span>
                   )}
                   <button
                     type="button"
                     onClick={() => handleRemoveTicker(t)}
-                    className="text-slate-500 hover:text-rose-400 ml-0.5 transition-colors"
+                    className="text-slate-400 hover:text-rose-600 ml-0.5 transition-colors"
                     title={`Remove ${t} from comparison`}
                   >
                     <X className="h-3 w-3" />
@@ -542,13 +542,13 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
                   placeholder="Add or swap ticker..."
                   value={newTickerInput}
                   onChange={(e) => setNewTickerInput(e.target.value.toUpperCase())}
-                  className="w-36 sm:w-44 h-7 pl-6 pr-2 text-xs font-mono text-slate-200 bg-slate-950 border border-slate-800 rounded-md focus:outline-none focus:border-blue-500"
+                  className="w-36 sm:w-44 h-7 pl-6 pr-2 text-xs font-mono text-slate-900 bg-white border border-slate-300 rounded-md focus:outline-none focus:border-blue-500 shadow-xs"
                 />
-                <Search className="absolute left-1.5 h-3.5 w-3.5 text-slate-500 pointer-events-none" />
+                <Search className="absolute left-1.5 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
               </div>
               <button
                 type="submit"
-                className="ml-1 h-7 px-2.5 text-xs font-medium text-blue-400 bg-slate-950 border border-slate-800 rounded-md hover:bg-blue-900/40 hover:text-white transition-colors"
+                className="ml-1 h-7 px-2.5 text-xs font-medium text-blue-600 bg-white border border-slate-300 rounded-md hover:bg-slate-50 transition-colors shadow-xs"
               >
                 <Plus className="h-3 w-3" />
               </button>
@@ -559,7 +559,7 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 text-xs">
             {/* Quick-add popular pills */}
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] text-slate-400 font-medium">Quick Pick:</span>
+              <span className="text-[11px] text-slate-500 font-medium">Quick Pick:</span>
               {POPULAR_TICKER_SUGGESTIONS.slice(0, 7).map((item) => {
                 const isSelected = selectedTickers.includes(item.symbol);
                 return (
@@ -569,8 +569,8 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
                     onClick={() => handleAddOrSwapTicker(item.symbol)}
                     className={`px-2 py-0.5 text-[11px] font-mono rounded border transition-all ${
                       isSelected
-                        ? 'bg-blue-950/70 border-blue-800 text-blue-300 font-semibold'
-                        : 'bg-slate-950/60 border-slate-800/80 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                        ? 'bg-blue-50 border-blue-300 text-blue-700 font-semibold'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                     }`}
                     title={item.name}
                   >
@@ -582,13 +582,13 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
 
             {/* Presets */}
             <div className="flex items-center gap-1.5 shrink-0">
-              <span className="text-[11px] text-slate-400 font-medium">Presets:</span>
+              <span className="text-[11px] text-slate-500 font-medium">Presets:</span>
               {PRESET_COMPARISONS.map((p) => (
                 <button
                   key={p.label}
                   type="button"
                   onClick={() => handleApplyPreset(p.tickers)}
-                  className="px-2 py-0.5 text-[10px] font-medium rounded bg-slate-900 border border-slate-800 text-slate-400 hover:text-blue-400 hover:border-slate-700 transition-colors"
+                  className="px-2 py-0.5 text-[10px] font-medium rounded bg-slate-100 border border-slate-200 text-slate-600 hover:text-blue-600 hover:bg-slate-200 transition-colors"
                 >
                   {p.label}
                 </button>
@@ -598,9 +598,9 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
         </div>
 
         {notice && (
-          <div className="mt-2 text-xs text-blue-300 bg-blue-950/40 border border-blue-800/50 rounded px-3 py-1.5 flex items-center justify-between">
+          <div className="mt-2 text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded px-3 py-1.5 flex items-center justify-between">
             <span>{notice}</span>
-            <button type="button" onClick={() => setNotice(null)} className="text-blue-400 hover:text-blue-200">
+            <button type="button" onClick={() => setNotice(null)} className="text-blue-600 hover:text-blue-800">
               <X className="h-3 w-3" />
             </button>
           </div>
@@ -609,29 +609,29 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
         {/* Chart Canvas with Dynamic Range */}
         <div className="h-[380px] sm:h-[420px] w-full pt-4">
           {isLoading && activeChartData.length === 0 ? (
-            <div className="h-full flex items-center justify-center text-slate-500 text-sm font-mono">
+            <div className="h-full flex items-center justify-center text-slate-400 text-sm font-mono">
               Loading price series and computing forward projections...
             </div>
           ) : activeChartData.length === 0 ? (
-            <div className="h-full flex items-center justify-center text-slate-500 text-sm font-mono">
+            <div className="h-full flex items-center justify-center text-slate-400 text-sm font-mono">
               No comparison records available.
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={activeChartData} margin={{ top: 15, right: 25, left: 15, bottom: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
 
                 <XAxis
                   dataKey={chartViewMode === 'forward_projections' ? 'displayLabel' : 'formattedDate'}
                   stroke="#64748b"
-                  tick={{ fill: '#94a3b8', fontSize: 11, fontFamily: 'var(--font-mono)' }}
+                  tick={{ fill: '#64748b', fontSize: 11, fontFamily: 'var(--font-mono)' }}
                   tickMargin={8}
                   minTickGap={chartViewMode === 'forward_projections' ? 10 : 40}
                 />
 
                 <YAxis
                   stroke="#64748b"
-                  tick={{ fill: '#94a3b8', fontSize: 11, fontFamily: 'var(--font-mono)' }}
+                  tick={{ fill: '#64748b', fontSize: 11, fontFamily: 'var(--font-mono)' }}
                   domain={dynamicYDomain}
                   tickMargin={10}
                   tickFormatter={(val) => {
@@ -648,10 +648,10 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
                   content={({ active, payload, label }) => {
                     if (!active || !payload || !payload.length) return null;
                     return (
-                      <div className="rounded-lg border border-slate-700 bg-slate-900/95 p-3 text-xs shadow-2xl backdrop-blur-md min-w-[220px]">
-                        <div className="font-mono text-slate-400 pb-1.5 mb-1.5 border-b border-slate-800 flex justify-between">
+                      <div className="rounded-lg border border-slate-200 bg-white/95 p-3 text-xs shadow-lg backdrop-blur-md min-w-[220px]">
+                        <div className="font-mono text-slate-500 pb-1.5 mb-1.5 border-b border-slate-200 flex justify-between">
                           <span>{chartViewMode === 'forward_projections' ? 'Projection:' : 'Observation:'}</span>
-                          <span className="text-white font-semibold">{label}</span>
+                          <span className="text-slate-900 font-semibold">{label}</span>
                         </div>
                         <div className="space-y-1.5 font-mono">
                           {payload.map((item: any) => {
@@ -662,7 +662,7 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
                                   <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
                                   {item.name}:
                                 </span>
-                                <span className="font-semibold tabular-nums text-white">
+                                <span className="font-semibold tabular-nums text-slate-900">
                                   {chartViewMode === 'forward_projections' ? formatCurrency(val) : `${val}`}
                                 </span>
                               </div>
@@ -693,7 +693,7 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
                   verticalAlign="bottom"
                   height={32}
                   wrapperStyle={{ paddingTop: 14, fontSize: 12 }}
-                  formatter={(val) => <span className="text-slate-300 font-medium mr-4">{val}</span>}
+                  formatter={(val) => <span className="text-slate-700 font-medium mr-4">{val}</span>}
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -702,45 +702,45 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
       </div>
 
       {/* Multi-Ticker Forward Projections Comparison Table */}
-      <div className="border-t border-slate-800/90 pt-5">
+      <div className="border-t border-slate-200 pt-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
+              <h3 className="text-base font-bold text-slate-900 tracking-tight flex items-center gap-2 font-display">
                 <span>Multi-Ticker 10-Year Forward Projections Comparison</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950 border border-blue-800 text-blue-300">
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700">
                   {selectedTickers.length} Selected
                 </span>
               </h3>
             </div>
-            <p className="text-xs text-slate-400 mt-0.5">
+            <p className="text-xs text-slate-500 mt-0.5">
               Side-by-side terminal wealth projections modeled on initial capital of{' '}
-              <strong className="text-slate-200">{sym}{initialAmount.toLocaleString()}</strong> plus{' '}
-              <strong className="text-slate-200">{sym}{monthlyContribution.toLocaleString()}/mo</strong> over 10 years (Total Invested: {sym}{totalContributed.toLocaleString()}).
+              <strong className="text-slate-800">{sym}{initialAmount.toLocaleString()}</strong> plus{' '}
+              <strong className="text-slate-800">{sym}{monthlyContribution.toLocaleString()}/mo</strong> over 10 years (Total Invested: {sym}{totalContributed.toLocaleString()}).
             </p>
           </div>
         </div>
 
         {/* Comparison Table */}
-        <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/80 shadow-lg">
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-xs">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-slate-800 bg-slate-900/90 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+              <tr className="border-b border-slate-200 bg-slate-50 text-[11px] font-semibold text-slate-600 uppercase tracking-wider">
                 <th className="py-3 px-4">ETF / Benchmark</th>
                 <th className="py-3 px-3 text-right">Hist. CAGR</th>
                 <th className="py-3 px-3 text-right">Volatility</th>
                 <th className="py-3 px-3 text-right">Max Drawdown</th>
-                <th className="py-3 px-3 text-right text-rose-400">10Y Bear (-20%)</th>
-                <th className="py-3 px-3 text-right text-amber-400">10Y Cons (-10%)</th>
-                <th className="py-3 px-4 text-right text-blue-300 bg-blue-950/30">10Y Base Horizon</th>
-                <th className="py-3 px-3 text-right text-sky-400">10Y Opt (+10%)</th>
-                <th className="py-3 px-3 text-right text-emerald-400">10Y Bull (+20%)</th>
+                <th className="py-3 px-3 text-right text-rose-700">10Y Bear (-20%)</th>
+                <th className="py-3 px-3 text-right text-amber-700">10Y Cons (-10%)</th>
+                <th className="py-3 px-4 text-right text-blue-700 bg-blue-50/50">10Y Base Horizon</th>
+                <th className="py-3 px-3 text-right text-sky-700">10Y Opt (+10%)</th>
+                <th className="py-3 px-3 text-right text-emerald-700">10Y Bull (+20%)</th>
                 <th className="py-3 px-4 text-right">Projected Net Gain</th>
                 <th className="py-3 px-3 text-right">MoIC</th>
                 <th className="py-3 px-3 text-center">Manage</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800/70 text-xs font-mono tabular-nums">
+            <tbody className="divide-y divide-slate-100 text-xs font-mono tabular-nums">
               {selectedTickers.map((t) => {
                 const item = tickerDataMap[t];
                 const color = TICKER_COLORS[t] || '#60a5fa';
@@ -760,8 +760,8 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
                 return (
                   <tr
                     key={t}
-                    className={`hover:bg-slate-850/50 transition-colors ${
-                      isPrimary ? 'bg-blue-950/25 font-medium' : ''
+                    className={`hover:bg-slate-50 transition-colors ${
+                      isPrimary ? 'bg-blue-50/40 font-medium' : ''
                     }`}
                   >
                     {/* Ticker & Fund Name */}
@@ -769,7 +769,7 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
                       <div className="flex items-center gap-2">
                         <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
                         <div>
-                          <div className="flex items-center gap-1.5 font-bold font-mono text-white text-sm">
+                          <div className="flex items-center gap-1.5 font-bold font-mono text-slate-900 text-sm">
                             <span>{t}</span>
                             {isPrimary && (
                               <span className="text-[10px] px-1.5 py-0.2 rounded bg-blue-600 text-white font-sans font-normal">
@@ -777,18 +777,18 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
                               </span>
                             )}
                             {isTopCagr && (
-                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-950 border border-emerald-800 text-emerald-300 font-sans font-normal flex items-center gap-0.5">
+                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 font-sans font-normal flex items-center gap-0.5">
                                 <Award className="h-3 w-3" />
                                 Top CAGR
                               </span>
                             )}
                             {isLowestVol && (
-                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-sky-950 border border-sky-800 text-sky-300 font-sans font-normal">
+                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-sky-50 border border-sky-200 text-sky-800 font-sans font-normal">
                                 Lowest Risk
                               </span>
                             )}
                           </div>
-                          <div className="text-[11px] text-slate-400 truncate max-w-[170px]">
+                          <div className="text-[11px] text-slate-500 truncate max-w-[170px]">
                             {item?.name || t}
                           </div>
                         </div>
@@ -796,9 +796,9 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
                     </td>
 
                     {/* Historical CAGR */}
-                    <td className="py-3.5 px-3 text-right font-bold text-slate-100">
+                    <td className="py-3.5 px-3 text-right font-bold text-slate-900">
                       {metrics ? (
-                        <span className={metrics.cagr > 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                        <span className={metrics.cagr > 0 ? 'text-emerald-700' : 'text-rose-700'}>
                           {metrics.cagr > 0 ? `+${formatPct(metrics.cagr)}` : formatPct(metrics.cagr)}
                         </span>
                       ) : (
@@ -807,44 +807,44 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
                     </td>
 
                     {/* Volatility */}
-                    <td className="py-3.5 px-3 text-right text-slate-300">
+                    <td className="py-3.5 px-3 text-right text-slate-700">
                       {metrics ? formatPct(metrics.annualized_volatility) : '—'}
                     </td>
 
                     {/* Max Drawdown */}
-                    <td className="py-3.5 px-3 text-right text-rose-400 font-medium">
+                    <td className="py-3.5 px-3 text-right text-rose-700 font-medium">
                       {metrics ? formatPct(metrics.max_drawdown) : '—'}
                     </td>
 
                     {/* Severe Bear (-20%) */}
-                    <td className="py-3.5 px-3 text-right text-rose-300">
+                    <td className="py-3.5 px-3 text-right text-rose-700">
                       {bearScen ? formatCurrency(bearScen.final_value) : '—'}
                     </td>
 
                     {/* Conservative (-10%) */}
-                    <td className="py-3.5 px-3 text-right text-amber-300">
+                    <td className="py-3.5 px-3 text-right text-amber-700">
                       {consScen ? formatCurrency(consScen.final_value) : '—'}
                     </td>
 
                     {/* 10Y Base Horizon (Highlighted) */}
-                    <td className="py-3.5 px-4 text-right font-extrabold text-blue-200 bg-blue-950/30 text-sm">
+                    <td className="py-3.5 px-4 text-right font-extrabold text-blue-700 bg-blue-50/50 text-sm">
                       {baseScen ? formatCurrency(baseScen.final_value) : '—'}
                     </td>
 
                     {/* Optimistic (+10%) */}
-                    <td className="py-3.5 px-3 text-right text-sky-300">
+                    <td className="py-3.5 px-3 text-right text-sky-700">
                       {optScen ? formatCurrency(optScen.final_value) : '—'}
                     </td>
 
                     {/* Strong Bull (+20%) */}
-                    <td className="py-3.5 px-3 text-right text-emerald-400 font-bold">
+                    <td className="py-3.5 px-3 text-right text-emerald-700 font-bold">
                       {bullScen ? formatCurrency(bullScen.final_value) : '—'}
                     </td>
 
                     {/* Projected Net Gain */}
                     <td className="py-3.5 px-4 text-right font-semibold">
                       {baseScen ? (
-                        <span className={baseScen.total_gain >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                        <span className={baseScen.total_gain >= 0 ? 'text-emerald-700' : 'text-rose-700'}>
                           {baseScen.total_gain >= 0 ? `+${formatCurrency(baseScen.total_gain)}` : formatCurrency(baseScen.total_gain)}
                         </span>
                       ) : (
@@ -853,7 +853,7 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
                     </td>
 
                     {/* MoIC */}
-                    <td className="py-3.5 px-3 text-right font-bold text-slate-200">
+                    <td className="py-3.5 px-3 text-right font-bold text-slate-800">
                       {baseScen ? `${baseScen.multiple.toFixed(2)}x` : '—'}
                     </td>
 
@@ -864,14 +864,14 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
                           <button
                             type="button"
                             onClick={() => onSelectPrimaryTicker(t)}
-                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-sans font-medium text-blue-400 hover:text-white bg-blue-950/60 hover:bg-blue-600 border border-blue-800/60 rounded transition-all whitespace-nowrap"
+                            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-sans font-medium text-blue-600 hover:text-white bg-blue-50 hover:bg-blue-600 border border-blue-200 rounded transition-all whitespace-nowrap"
                             title={`Set ${t} as the primary dashboard focus`}
                           >
                             <span>Focus</span>
                             <ArrowRight className="h-3 w-3" />
                           </button>
                         ) : (
-                          <span className="text-[11px] text-blue-400 font-semibold px-2 py-1 bg-blue-950/60 rounded border border-blue-800/40">
+                          <span className="text-[11px] text-blue-700 font-semibold px-2 py-1 bg-blue-50 rounded border border-blue-200">
                             Active
                           </span>
                         )}
@@ -880,7 +880,7 @@ export const BenchmarkComparisonChart: React.FC<BenchmarkComparisonChartProps> =
                           <button
                             type="button"
                             onClick={() => handleRemoveTicker(t)}
-                            className="p-1 text-slate-500 hover:text-rose-400 transition-colors"
+                            className="p-1 text-slate-400 hover:text-rose-600 transition-colors"
                             title={`Remove ${t}`}
                           >
                             <Trash2 className="h-3 w-3" />

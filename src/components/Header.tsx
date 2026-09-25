@@ -21,13 +21,13 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleViewMode,
 }) => {
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-md">
+    <header className="sticky top-0 z-40 w-full border-b border-slate-200 bg-white/95 backdrop-blur-md shadow-xs">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         {/* Zone 1: Single text element brand wordmark */}
         <div className="flex items-center gap-3">
           <a
             href="/"
-            className="font-display text-xl font-extrabold tracking-tight text-white hover:text-blue-400 transition-colors"
+            className="font-display text-xl font-extrabold tracking-tight text-slate-900 hover:text-blue-600 transition-colors"
           >
             ETF Horizon
           </a>
@@ -38,14 +38,14 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Zone 2: Navigation & Mode Switcher */}
         <div className="flex items-center gap-2">
-          <div className="flex items-center p-1 bg-slate-900 rounded-lg border border-slate-800 text-xs font-medium">
+          <div className="flex items-center p-1 bg-slate-100 rounded-lg border border-slate-200 text-xs font-medium">
             <button
               type="button"
               onClick={() => onToggleViewMode('goal_allocation')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all ${
                 viewMode === 'goal_allocation'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <Target className="h-3.5 w-3.5" />
@@ -56,8 +56,8 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={() => onToggleViewMode('single_etf')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all ${
                 viewMode === 'single_etf'
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
               }`}
             >
               <LineChart className="h-3.5 w-3.5" />
@@ -68,9 +68,9 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={onScrollToMcp}
-            className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-slate-400 hover:text-white transition-colors"
+            className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-slate-600 hover:text-slate-900 transition-colors"
           >
-            <Activity className="h-3.5 w-3.5 text-blue-400" />
+            <Activity className="h-3.5 w-3.5 text-blue-600" />
             <span>MCP Activity</span>
           </button>
         </div>
@@ -81,20 +81,20 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={onToggleCurrency}
-            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-mono font-medium rounded border border-slate-800 bg-slate-900 text-slate-300 hover:border-slate-700 hover:text-white transition-colors whitespace-nowrap"
+            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-mono font-medium rounded border border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100 transition-colors whitespace-nowrap"
             title="Toggle Base Currency Display"
           >
             <span className="text-slate-500">Base:</span>
-            <span className="text-blue-400 font-semibold">{currency === 'SGD' ? 'S$ (SGD)' : '$ (USD)'}</span>
+            <span className="text-blue-600 font-semibold">{currency === 'SGD' ? 'S$ (SGD)' : '$ (USD)'}</span>
           </button>
 
           {/* CSV Fallback Button */}
           <button
             type="button"
             onClick={onOpenCsvUpload}
-            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-200 bg-slate-900 border border-slate-800 rounded hover:bg-slate-800 hover:text-white transition-colors whitespace-nowrap"
+            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded hover:bg-slate-50 hover:text-slate-900 transition-colors whitespace-nowrap shadow-xs"
           >
-            <UploadCloud className="h-3.5 w-3.5 text-blue-400" />
+            <UploadCloud className="h-3.5 w-3.5 text-blue-600" />
             <span>CSV Fallback</span>
           </button>
 
@@ -102,7 +102,7 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={onScrollToMcp}
-            className="flex items-center gap-2 px-3 py-1.5 text-xs font-mono font-medium rounded border border-slate-800/90 bg-slate-900/60 text-slate-300 hover:border-slate-700 hover:bg-slate-850 transition-colors whitespace-nowrap"
+            className="flex items-center gap-2 px-3 py-1.5 text-xs font-mono font-medium rounded border border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100 transition-colors whitespace-nowrap"
             title="Inspect Model Context Protocol server activity"
           >
             <span className="relative flex h-2 w-2">
@@ -119,8 +119,8 @@ export const Header: React.FC<HeaderProps> = ({
                 }`}
               />
             </span>
-            <Server className="h-3.5 w-3.5 text-slate-400 hidden xs:inline" />
-            <span className="hidden sm:inline text-slate-300">MCP JSON-RPC</span>
+            <Server className="h-3.5 w-3.5 text-slate-500 hidden xs:inline" />
+            <span className="hidden sm:inline text-slate-700">MCP JSON-RPC</span>
           </button>
         </div>
       </div>

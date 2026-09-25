@@ -83,8 +83,8 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
     <div
       className={`rounded-xl border transition-all flex flex-col justify-between ${
         isActiveChart
-          ? 'border-blue-500 bg-slate-900/90 shadow-xl shadow-blue-950/40 ring-1 ring-blue-500/50'
-          : 'border-slate-800 bg-slate-950/70 hover:border-slate-700'
+          ? 'border-blue-600 bg-white shadow-md ring-2 ring-blue-600/30'
+          : 'border-slate-200 bg-white hover:border-slate-300 shadow-xs'
       }`}
     >
       <div className="p-4 sm:p-5 space-y-4">
@@ -92,14 +92,14 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-mono uppercase tracking-wider text-blue-400 font-semibold bg-blue-950 px-2 py-0.5 rounded border border-blue-800/80">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-blue-700 font-semibold bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
                 {mix.mixLabel}
               </span>
-              <span className="text-[11px] font-mono text-slate-400">
-                Risk: <strong className="text-slate-200">{mix.riskRating}</strong>
+              <span className="text-[11px] font-mono text-slate-500">
+                Risk: <strong className="text-slate-800">{mix.riskRating}</strong>
               </span>
             </div>
-            <h3 className="text-base font-bold text-white tracking-tight mt-1 font-display">
+            <h3 className="text-base font-bold text-slate-900 tracking-tight mt-1 font-display">
               {mix.mixName}
             </h3>
           </div>
@@ -109,10 +109,10 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
             <div
               className={`flex flex-col items-end px-3 py-1.5 rounded-lg border ${
                 probPercent >= 80
-                  ? 'border-emerald-800/70 bg-emerald-950/40 text-emerald-300'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
                   : probPercent >= 60
-                  ? 'border-amber-800/70 bg-amber-950/40 text-amber-300'
-                  : 'border-rose-800/70 bg-rose-950/40 text-rose-300'
+                  ? 'border-amber-200 bg-amber-50 text-amber-800'
+                  : 'border-rose-200 bg-rose-50 text-rose-800'
               }`}
             >
               <div className="text-[10px] font-mono tracking-tight uppercase opacity-80">
@@ -126,13 +126,13 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
         </div>
 
         {/* Description & Singapore Context Rationale */}
-        <p className="text-xs text-slate-400 leading-relaxed">
+        <p className="text-xs text-slate-600 leading-relaxed">
           {mix.description}
         </p>
 
         {mix.rationale && (
-          <div className="text-[11px] text-slate-400 bg-slate-900/60 p-2.5 rounded-lg border border-slate-850 leading-relaxed">
-            <span className="text-slate-300 font-semibold">Strategic Rationale: </span>
+          <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-200 leading-relaxed">
+            <span className="text-slate-800 font-semibold">Strategic Rationale: </span>
             {mix.rationale}
           </div>
         )}
@@ -140,8 +140,8 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
         {/* Asset Allocation Breakdown Stacked Bar */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-[11px] font-mono">
-            <span className="text-slate-400">Asset Mix</span>
-            <span className="text-slate-300 font-semibold">
+            <span className="text-slate-500">Asset Mix</span>
+            <span className="text-slate-700 font-semibold">
               {mix.blendedSeries
                 ? `~${(mix.blendedSeries.annualized_return * 100).toFixed(1)}% p.a. hist CAGR`
                 : '100% Target'}
@@ -149,7 +149,7 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
           </div>
 
           {/* Stacked Progress Bar */}
-          <div className="h-2.5 w-full bg-slate-900 rounded-full flex overflow-hidden border border-slate-800">
+          <div className="h-2.5 w-full bg-slate-100 rounded-full flex overflow-hidden border border-slate-200">
             {assetKeys.map((key) => {
               const weight = mix.weights[key];
               return (
@@ -166,7 +166,7 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
           </div>
 
           {/* Key Legend Pill Breakdown */}
-          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-mono text-slate-400 pt-1">
+          <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] font-mono text-slate-500 pt-1">
             {assetKeys.map((key) => {
               const weight = mix.weights[key];
               return (
@@ -176,7 +176,7 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
                     style={{ backgroundColor: ASSET_COLORS[key] }}
                   />
                   <span>{ASSET_LABELS[key]}</span>
-                  <strong className="text-slate-200">{(weight * 100).toFixed(0)}%</strong>
+                  <strong className="text-slate-800">{(weight * 100).toFixed(0)}%</strong>
                 </span>
               );
             })}
@@ -184,24 +184,24 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
         </div>
 
         {/* Required Contribution Analysis */}
-        <div className="pt-2 border-t border-slate-800 space-y-2">
+        <div className="pt-2 border-t border-slate-200 space-y-2">
           <div className="flex items-center justify-between">
             <div>
-              <span className="text-xs font-semibold text-slate-200 block">
+              <span className="text-xs font-semibold text-slate-800 block">
                 Required Monthly Contribution
               </span>
-              <span className="text-[10px] text-slate-400 font-mono">
+              <span className="text-[10px] text-slate-500 font-mono">
                 To reach target at 80% confidence
               </span>
             </div>
 
             <div className="text-right font-mono">
-              <span className="text-base font-extrabold text-blue-400">
+              <span className="text-base font-extrabold text-blue-600">
                 {reqMonthly !== undefined
                   ? `${currencySymbol}${reqMonthly.toLocaleString()}`
                   : 'Computing...'}
               </span>
-              <span className="text-xs text-slate-400">/mo</span>
+              <span className="text-xs text-slate-500">/mo</span>
             </div>
           </div>
 
@@ -210,15 +210,15 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
             <div
               className={`p-2 rounded-lg text-xs font-mono flex items-center justify-between ${
                 monthlyDiff >= 0
-                  ? 'bg-emerald-950/40 border border-emerald-800/60 text-emerald-300'
-                  : 'bg-amber-950/40 border border-amber-800/60 text-amber-300'
+                  ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+                  : 'bg-amber-50 border border-amber-200 text-amber-800'
               }`}
             >
               <div className="flex items-center gap-1.5">
                 {monthlyDiff >= 0 ? (
-                  <CheckCircle className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                  <CheckCircle className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
                 ) : (
-                  <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                  <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
                 )}
                 <span>
                   {monthlyDiff >= 0
@@ -227,7 +227,7 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
                 </span>
               </div>
 
-              <span className="text-[10px] text-slate-400">
+              <span className="text-[10px] text-slate-500">
                 (Current: {currencySymbol}{currentMonthlyContribution})
               </span>
             </div>
@@ -235,28 +235,28 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
         </div>
 
         {/* Outcome Trajectory Range (10th, 50th, 90th) */}
-        <div className="rounded-lg bg-slate-950 border border-slate-850 p-3 space-y-1.5">
-          <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
+        <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 space-y-1.5">
+          <div className="flex items-center justify-between text-[11px] font-mono text-slate-500">
             <span>{years}-Yr Outcome {isRealTerms ? '(Real S$)' : '(Nominal S$)'}</span>
             <span>Target: {currencySymbol}{targetAmount.toLocaleString()}</span>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-850 text-center font-mono">
+          <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-200 text-center font-mono">
             <div>
-              <span className="text-[10px] text-rose-400 block">10th Percentile</span>
-              <span className="text-xs font-bold text-slate-300">
+              <span className="text-[10px] text-rose-600 block">10th Percentile</span>
+              <span className="text-xs font-bold text-slate-700">
                 {p10Terminal !== undefined ? `${currencySymbol}${p10Terminal.toLocaleString()}` : '-'}
               </span>
             </div>
             <div>
-              <span className="text-[10px] text-blue-400 block font-semibold">50th (Median)</span>
-              <span className="text-xs font-extrabold text-white">
+              <span className="text-[10px] text-blue-600 block font-semibold">50th (Median)</span>
+              <span className="text-xs font-extrabold text-slate-900">
                 {medianTerminal !== undefined ? `${currencySymbol}${medianTerminal.toLocaleString()}` : '-'}
               </span>
             </div>
             <div>
-              <span className="text-[10px] text-emerald-400 block">90th Percentile</span>
-              <span className="text-xs font-bold text-slate-300">
+              <span className="text-[10px] text-emerald-600 block">90th Percentile</span>
+              <span className="text-xs font-bold text-slate-700">
                 {p90Terminal !== undefined ? `${currencySymbol}${p90Terminal.toLocaleString()}` : '-'}
               </span>
             </div>
@@ -265,12 +265,12 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
 
         {/* Worst Case Drawdown */}
         {sim?.worst_case_drawdown !== undefined && (
-          <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 px-1">
+          <div className="flex items-center justify-between text-[11px] font-mono text-slate-500 px-1">
             <span className="flex items-center gap-1">
-              <TrendingDown className="h-3 w-3 text-rose-400" />
+              <TrendingDown className="h-3 w-3 text-rose-600" />
               Worst-case simulated drawdown:
             </span>
-            <span className="text-rose-400 font-bold">
+            <span className="text-rose-600 font-bold">
               {(sim.worst_case_drawdown * 100).toFixed(1)}%
             </span>
           </div>
@@ -278,11 +278,11 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
       </div>
 
       {/* Card Actions */}
-      <div className="p-3 bg-slate-950/80 border-t border-slate-800 flex items-center justify-between gap-2">
+      <div className="p-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
         <button
           type="button"
           onClick={onApplyAsCustom}
-          className="text-xs font-medium text-slate-400 hover:text-white px-2.5 py-1.5 rounded hover:bg-slate-900 transition-colors"
+          className="text-xs font-medium text-slate-600 hover:text-slate-900 px-2.5 py-1.5 rounded hover:bg-slate-100 transition-colors"
         >
           Customize Weights
         </button>
@@ -292,8 +292,8 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
           onClick={onSelectActiveChart}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
             isActiveChart
-              ? 'bg-blue-600 text-white shadow-sm'
-              : 'bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white'
+              ? 'bg-blue-600 text-white shadow-xs'
+              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
           }`}
         >
           {isActiveChart ? (

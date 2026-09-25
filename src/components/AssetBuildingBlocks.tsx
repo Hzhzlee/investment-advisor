@@ -106,28 +106,28 @@ export const AssetBuildingBlocks: React.FC<AssetBuildingBlocksProps> = ({
   };
 
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 backdrop-blur-sm space-y-4">
+    <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-xs space-y-4">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-base font-bold text-white tracking-tight font-display">
+            <h2 className="text-base font-bold text-slate-900 tracking-tight font-display">
               Asset-Class Building Blocks & Proxies
             </h2>
-            <span className="text-[11px] font-mono text-slate-400">
+            <span className="text-[11px] font-mono text-slate-500">
               7 Configurable Components
             </span>
           </div>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <p className="text-xs text-slate-500 mt-0.5">
             Model building blocks for Singapore retail investors. Cash & sovereign rates use user-editable assumptions. Market proxies use dividend-adjusted total returns.
           </p>
         </div>
 
         {/* Expense ratio / fee drag input */}
-        <div className="flex items-center gap-2.5 bg-slate-950/80 px-3 py-2 rounded-lg border border-slate-800 self-start sm:self-auto">
-          <Sliders className="h-3.5 w-3.5 text-blue-400" />
+        <div className="flex items-center gap-2.5 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200 self-start sm:self-auto">
+          <Sliders className="h-3.5 w-3.5 text-blue-600" />
           <div className="flex flex-col">
-            <label htmlFor="feeDragInput" className="text-[10px] text-slate-400 font-medium">
+            <label htmlFor="feeDragInput" className="text-[10px] text-slate-500 font-medium">
               Expense Ratio / Fee Drag
             </label>
             <div className="flex items-center gap-1.5 mt-0.5">
@@ -144,9 +144,9 @@ export const AssetBuildingBlocks: React.FC<AssetBuildingBlocksProps> = ({
                     onUpdateFeeDrag(val / 100);
                   }
                 }}
-                className="w-14 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs font-mono font-semibold text-white focus:outline-none focus:border-blue-500"
+                className="w-14 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs font-mono font-semibold text-slate-900 focus:outline-none focus:border-blue-500 shadow-xs"
               />
-              <span className="text-xs text-slate-400 font-mono">% p.a.</span>
+              <span className="text-xs text-slate-500 font-mono">% p.a.</span>
             </div>
           </div>
         </div>
@@ -161,15 +161,15 @@ export const AssetBuildingBlocks: React.FC<AssetBuildingBlocksProps> = ({
           return (
             <div
               key={key}
-              className="rounded-lg border border-slate-800/80 bg-slate-950/70 p-3.5 flex flex-col justify-between hover:border-slate-700 transition-colors"
+              className="rounded-lg border border-slate-200 bg-slate-50/60 p-3.5 flex flex-col justify-between hover:border-slate-300 hover:bg-slate-50 transition-colors shadow-2xs"
             >
               <div>
                 <div className="flex items-center justify-between gap-2 mb-1.5">
                   <div className="flex items-center gap-2">
-                    <div className="p-1.5 rounded bg-slate-900 border border-slate-800">
+                    <div className="p-1.5 rounded bg-white border border-slate-200 shadow-2xs">
                       {getIcon(key)}
                     </div>
-                    <span className="text-xs font-bold text-slate-200">
+                    <span className="text-xs font-bold text-slate-900">
                       {cfg.name}
                     </span>
                   </div>
@@ -179,17 +179,17 @@ export const AssetBuildingBlocks: React.FC<AssetBuildingBlocksProps> = ({
                   </span>
                 </div>
 
-                <p className="text-[11px] text-slate-400 leading-relaxed mb-3">
+                <p className="text-[11px] text-slate-600 leading-relaxed mb-3">
                   {cfg.description}
                 </p>
               </div>
 
               {/* Editable Configuration */}
-              <div className="pt-2 border-t border-slate-850/80">
+              <div className="pt-2 border-t border-slate-200">
                 {cfg.isFixedRate ? (
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-amber-400/90 font-medium flex items-center gap-1">
+                      <span className="text-[10px] text-amber-700 font-medium flex items-center gap-1">
                         <Info className="h-3 w-3" />
                         Assumption to update
                       </span>
@@ -206,9 +206,9 @@ export const AssetBuildingBlocks: React.FC<AssetBuildingBlocksProps> = ({
                               onUpdateRate(key, val / 100);
                             }
                           }}
-                          className="w-14 bg-slate-900 border border-slate-700 rounded px-1.5 py-0.5 text-xs font-mono font-bold text-white text-right focus:outline-none focus:border-blue-500"
+                          className="w-14 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-xs font-mono font-bold text-slate-900 text-right focus:outline-none focus:border-blue-500 shadow-2xs"
                         />
-                        <span className="text-xs text-slate-300 font-semibold">%</span>
+                        <span className="text-xs text-slate-700 font-semibold">%</span>
                       </div>
                     </div>
                     {cfg.assumptionNote && (
@@ -220,7 +220,7 @@ export const AssetBuildingBlocks: React.FC<AssetBuildingBlocksProps> = ({
                 ) : (
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-slate-400">Market Proxy:</span>
+                      <span className="text-[10px] text-slate-500">Market Proxy:</span>
                       {editingTickerKey === key ? (
                         <div className="flex items-center gap-1">
                           <input
@@ -228,14 +228,14 @@ export const AssetBuildingBlocks: React.FC<AssetBuildingBlocksProps> = ({
                             value={tempTickerValue}
                             onChange={(e) => setTempTickerValue(e.target.value.toUpperCase())}
                             placeholder="Ticker"
-                            className="w-20 bg-slate-900 border border-blue-500 rounded px-1.5 py-0.5 text-xs font-mono font-bold text-white uppercase focus:outline-none"
+                            className="w-20 bg-white border border-blue-500 rounded px-1.5 py-0.5 text-xs font-mono font-bold text-slate-900 uppercase focus:outline-none shadow-2xs"
                             autoFocus
                           />
                           <button
                             type="button"
                             onClick={() => handleValidateAndSaveTicker(key)}
                             disabled={valState?.status === 'validating'}
-                            className="px-2 py-0.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-[10px] font-semibold transition-colors flex items-center gap-0.5"
+                            className="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-semibold transition-colors flex items-center gap-0.5 shadow-2xs"
                           >
                             {valState?.status === 'validating' ? (
                               <RefreshCw className="h-3 w-3 animate-spin" />
@@ -246,20 +246,20 @@ export const AssetBuildingBlocks: React.FC<AssetBuildingBlocksProps> = ({
                           <button
                             type="button"
                             onClick={() => setEditingTickerKey(null)}
-                            className="px-1.5 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[10px]"
+                            className="px-1.5 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded text-[10px]"
                           >
                             Cancel
                           </button>
                         </div>
                       ) : (
                         <div className="flex items-center gap-1.5">
-                          <span className="font-mono text-xs font-bold text-blue-400 bg-blue-950/60 px-2 py-0.5 rounded border border-blue-800/80">
+                          <span className="font-mono text-xs font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
                             {cfg.currentProxy}
                           </span>
                           <button
                             type="button"
                             onClick={() => handleStartEditTicker(key, cfg.currentProxy)}
-                            className="text-[10px] text-slate-400 hover:text-white underline underline-offset-2 transition-colors"
+                            className="text-[10px] text-slate-500 hover:text-slate-900 underline underline-offset-2 transition-colors"
                           >
                             Swap
                           </button>
@@ -269,13 +269,13 @@ export const AssetBuildingBlocks: React.FC<AssetBuildingBlocksProps> = ({
 
                     {/* Validation feedback message */}
                     {valState?.status === 'success' && (
-                      <div className="flex items-center gap-1 text-[10px] text-emerald-400 font-mono">
+                      <div className="flex items-center gap-1 text-[10px] text-emerald-600 font-mono">
                         <CheckCircle2 className="h-3 w-3 shrink-0" />
                         <span className="truncate">{valState.message}</span>
                       </div>
                     )}
                     {valState?.status === 'error' && (
-                      <div className="flex items-start gap-1 text-[10px] text-rose-400 font-mono leading-tight">
+                      <div className="flex items-start gap-1 text-[10px] text-rose-600 font-mono leading-tight">
                         <AlertCircle className="h-3 w-3 shrink-0 mt-0.5" />
                         <span>{valState.message}</span>
                       </div>
@@ -283,7 +283,7 @@ export const AssetBuildingBlocks: React.FC<AssetBuildingBlocksProps> = ({
                     {!valState?.status || valState.status === 'idle' ? (
                       <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono">
                         <span>Default: {cfg.defaultProxy}</span>
-                        <span className="text-emerald-500">Total Return</span>
+                        <span className="text-emerald-600 font-medium">Total Return</span>
                       </div>
                     ) : null}
                   </div>

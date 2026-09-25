@@ -598,7 +598,7 @@ export default function App() {
   const activeMixForChart = combinedMixes.find(m => m.mixId === activeChartMixId) || combinedMixes[0] || customMixState;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col antialiased">
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col antialiased">
       {/* Top Bar Contract Navigation */}
       <Header
         onOpenCsvUpload={() => setIsCsvModalOpen(true)}
@@ -613,25 +613,25 @@ export default function App() {
       {/* Main Workspace Canvas */}
       <main className="flex-1 mx-auto max-w-7xl w-full px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         {/* Title Header Banner */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-2 border-b border-slate-800">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-2 border-b border-slate-200">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white font-display">
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 font-display">
               {viewMode === 'goal_allocation'
                 ? 'Singapore Goal-Based Asset Allocation Illustrator'
                 : 'ETF Horizon Single-Asset Analytics'}
             </h1>
-            <p className="text-xs sm:text-sm text-slate-400 mt-1">
+            <p className="text-xs sm:text-sm text-slate-600 mt-1">
               {viewMode === 'goal_allocation'
                 ? 'Illustrative forward planning for retail investors in Singapore. Models 7 asset classes with block bootstrap simulations.'
                 : 'Deterministic 5-scenario wealth projections and stochastic Monte Carlo paths from historical ETF prices.'}
             </p>
           </div>
 
-          <div className="flex items-center gap-3 text-xs font-mono text-slate-400">
+          <div className="flex items-center gap-3 text-xs font-mono text-slate-500">
             <span className="flex items-center gap-1.5">
-              <Database className="h-3.5 w-3.5 text-blue-400" />
+              <Database className="h-3.5 w-3.5 text-blue-600" />
               <span>Data Engine:</span>
-              <span className="text-slate-200 font-semibold">
+              <span className="text-slate-800 font-semibold">
                 Yahoo Finance Total Return (Adj Close)
               </span>
             </span>
@@ -640,11 +640,11 @@ export default function App() {
 
         {/* Connectivity / Notice Banner */}
         {errorMessage && (
-          <div className="rounded-xl border border-amber-800/60 bg-amber-950/30 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-200">
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900">
             <div className="flex items-start gap-2.5">
-              <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
               <div className="leading-relaxed">
-                <span className="font-semibold text-amber-300">Notice: </span>
+                <span className="font-semibold text-amber-900">Notice: </span>
                 {errorMessage}
               </div>
             </div>
@@ -653,7 +653,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setIsCsvModalOpen(true)}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-900/60 hover:bg-amber-800 border border-amber-700/80 text-white font-medium text-xs transition-colors"
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-medium text-xs transition-colors shadow-xs"
               >
                 <UploadCloud className="h-3.5 w-3.5" />
                 <span>Upload CSV / Fallback</span>
@@ -699,11 +699,11 @@ export default function App() {
             <section className="space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
-                  <h2 className="text-base font-bold text-white tracking-tight font-display">
+                  <h2 className="text-base font-bold text-slate-900 tracking-tight font-display">
                     Illustrative Investment Mixes
                   </h2>
-                  <p className="text-xs text-slate-400">
-                    Calculated via MCP <code className="font-mono text-slate-300">suggest_mixes</code> for Risk Level {riskLevel} over a {years}-year horizon.
+                  <p className="text-xs text-slate-500">
+                    Calculated via MCP <code className="font-mono text-slate-700 bg-slate-100 px-1 py-0.5 rounded">suggest_mixes</code> for Risk Level {riskLevel} over a {years}-year horizon.
                   </p>
                 </div>
 
@@ -712,9 +712,9 @@ export default function App() {
                     type="button"
                     onClick={runGoalAnalyticsPipeline}
                     disabled={isLoading}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-850 border border-slate-800 text-xs font-mono text-slate-300 transition-colors"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-slate-50 border border-slate-200 text-xs font-mono text-slate-700 transition-colors shadow-xs"
                   >
-                    <RefreshCw className={`h-3 w-3 ${isLoading ? 'animate-spin text-blue-400' : ''}`} />
+                    <RefreshCw className={`h-3 w-3 ${isLoading ? 'animate-spin text-blue-600' : ''}`} />
                     <span>Re-evaluate Mixes</span>
                   </button>
                 </div>
