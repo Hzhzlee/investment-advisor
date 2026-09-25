@@ -29,7 +29,7 @@ export const Header: React.FC<HeaderProps> = ({
             href="/"
             className="font-display text-xl font-extrabold tracking-tight text-slate-900 hover:text-blue-600 transition-colors"
           >
-            ETF Horizon
+            My Financial Guru
           </a>
           <span className="hidden sm:inline-block text-xs font-mono text-slate-500 uppercase tracking-wider">
             Singapore Goal Allocation

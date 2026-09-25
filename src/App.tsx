@@ -1,5 +1,5 @@
 /**
- * ETF Horizon - Singapore Goal-Based Asset Allocation Illustrator
+ * My Financial Guru - Singapore Goal-Based Asset Allocation Illustrator
  * Extends the institutional ETF horizon engine into a goal-based asset allocation
  * illustrator for basic investors in Singapore.
  * 
@@ -11,7 +11,6 @@ import { Header } from './components/Header';
 import { GoalPlanner, SINGAPORE_GOAL_PRESETS, GoalPreset } from './components/GoalPlanner';
 import { AllocationMixCard } from './components/AllocationMixCard';
 import { GoalTrajectoryChart } from './components/GoalTrajectoryChart';
-import { CustomAllocationEditor } from './components/CustomAllocationEditor';
 import { Controls } from './components/Controls';
 import { KpiCards } from './components/KpiCards';
 import { BenchmarkComparisonChart } from './components/BenchmarkComparisonChart';
@@ -148,18 +147,8 @@ export default function App() {
   // 2. Asset Building Blocks & Proxies
   const [assetConfigs, setAssetConfigs] = useState<Record<AssetClassKey, AssetClassConfig>>(DEFAULT_ASSET_CONFIGS);
 
-  // 3. Illustrative Mix Analytics & Custom Allocation
+  // 3. Illustrative Mix Analytics
   const [mixStates, setMixStates] = useState<MixAnalyticsState[]>([]);
-  const [customWeights, setCustomWeights] = useState<Record<AssetClassKey, number>>({
-    cash: 0.10,
-    gov_backed: 0.15,
-    bonds: 0.20,
-    global_equity: 0.30,
-    sg_equity: 0.15,
-    reits: 0.05,
-    gold: 0.05
-  });
-  const [customMixState, setCustomMixState] = useState<MixAnalyticsState | null>(null);
   const [activeChartMixId, setActiveChartMixId] = useState<string>('mix_1');
 
   // 4. Preserved Single ETF State
@@ -175,7 +164,6 @@ export default function App() {
 
   // Global App States
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isSimulatingCustom, setIsSimulatingCustom] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [mcpStatus, setMcpStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
@@ -310,101 +298,6 @@ export default function App() {
 
       setMixStates(processedMixes);
 
-      // Process Custom Mix via planGoal if any weight > 0
-      const customPayload = (Object.keys(customWeights) as AssetClassKey[])
-        .filter(k => customWeights[k] > 0)
-        .map(key => {
-          const cfg = assetConfigs[key] || DEFAULT_ASSET_CONFIGS[key];
-          if (cfg.isFixedRate) {
-            return {
-              asset_class: key,
-              fixed_rate: cfg.fixedRate ?? 0.02,
-              weight: customWeights[key]
-            };
-          } else {
-            return {
-              asset_class: key,
-              ticker: cfg.currentProxy,
-              weight: customWeights[key]
-            };
-          }
-        });
-
-      if (customPayload.length > 0) {
-        const customPlanRes = await mcpClient.planGoal({
-          start_value: startValue,
-          monthly_contribution: monthlyContribution,
-          years,
-          target_amount: targetAmount,
-          confidence: 0.80,
-          inflation,
-          fee_drag: feeDrag,
-          base_currency: currency,
-          seed: 42,
-          components: customPayload
-        });
-
-        if (customPlanRes?.mixes && customPlanRes.mixes.length > 0) {
-          const cpm = customPlanRes.mixes[0];
-          setCustomMixState({
-            mixId: 'custom',
-            mixName: 'Custom Mix Allocation',
-            mixLabel: 'Bespoke Blend',
-            description: cpm.description,
-            rationale: cpm.rationale,
-            riskRating: 'Custom',
-            weights: { ...customWeights },
-            blendedSeries: {
-              monthly_returns: [],
-              annualized_return: cpm.historical_blended_cagr,
-              annualized_volatility: cpm.historical_annualized_volatility,
-              max_drawdown: cpm.drawdown_p95,
-              total_months: cpm.data_window?.total_months ?? (years * 12),
-              start_date: cpm.data_window?.start_date,
-              end_date: cpm.data_window?.end_date,
-              aligned_months: cpm.data_window?.total_months,
-              base_currency: currency,
-              components_summary: []
-            },
-            simulation: {
-              probability_of_success: cpm.probability_of_success,
-              real_probability_of_success: cpm.real_probability_of_success,
-              median_final_value: cpm.median_final_value,
-              real_median_final_value: cpm.real_median_final_value,
-              p10_final: cpm.p10_final,
-              p50_final: cpm.median_final_value,
-              p90_final: cpm.p90_final,
-              real_p10_final: cpm.real_p10_final,
-              real_p50_final: cpm.real_median_final_value,
-              real_p90_final: cpm.real_p90_final,
-              drawdown_median: cpm.drawdown_median,
-              drawdown_p95: cpm.drawdown_p95,
-              worst_case_drawdown: cpm.drawdown_p95,
-              total_contributed: Math.round(startValue + monthlyContribution * 12 * years),
-              target_amount: targetAmount,
-              years,
-              inflation,
-              fee_drag: feeDrag,
-              seed: 42,
-              trajectories: cpm.yearly_trajectory || []
-            },
-            requiredContribution: {
-              required_monthly_contribution: cpm.required_monthly_contribution,
-              achieved_probability: cpm.achieved_probability,
-              confidence: 0.80,
-              achievable: cpm.achievable,
-              target_amount: targetAmount,
-              years,
-              start_value: startValue,
-              real_terms: isRealTerms,
-              inflation,
-              fee_drag: feeDrag,
-              expected_terminal_p50: cpm.median_final_value
-            },
-            isLoading: false
-          });
-        }
-      }
     } catch (err: any) {
       console.error('Goal analytics pipeline error:', err);
       setErrorMessage(err?.message || 'Goal simulation toolchain encountered an issue.');
@@ -421,8 +314,7 @@ export default function App() {
     targetAmount,
     inflation,
     feeDrag,
-    isRealTerms,
-    customWeights
+    isRealTerms
   ]);
 
   // Re-run goal pipeline when parameters change
@@ -539,64 +431,6 @@ export default function App() {
     setRiskLevel(preset.defaultRisk);
   };
 
-  // Handlers for Custom Weights
-  const handleCustomWeightChange = (key: AssetClassKey, newWeight: number) => {
-    setCustomWeights(prev => ({
-      ...prev,
-      [key]: newWeight
-    }));
-  };
-
-  const handleNormalizeCustomWeights = () => {
-    const total = Object.values(customWeights).reduce((a, b) => a + b, 0);
-    if (total <= 0) return;
-    const normalized: Record<AssetClassKey, number> = {} as any;
-    for (const k of Object.keys(customWeights) as AssetClassKey[]) {
-      normalized[k] = Math.round((customWeights[k] / total) * 100) / 100;
-    }
-    setCustomWeights(normalized);
-  };
-
-  const handleApplyPresetWeights = (preset: 'balanced' | 'all_weather' | 'growth') => {
-    if (preset === 'balanced') {
-      setCustomWeights({
-        cash: 0.10,
-        gov_backed: 0.15,
-        bonds: 0.20,
-        global_equity: 0.30,
-        sg_equity: 0.15,
-        reits: 0.05,
-        gold: 0.05
-      });
-    } else if (preset === 'all_weather') {
-      setCustomWeights({
-        cash: 0.05,
-        gov_backed: 0.15,
-        bonds: 0.30,
-        global_equity: 0.25,
-        sg_equity: 0.10,
-        reits: 0.05,
-        gold: 0.10
-      });
-    } else {
-      // growth
-      setCustomWeights({
-        cash: 0.05,
-        gov_backed: 0.00,
-        bonds: 0.10,
-        global_equity: 0.55,
-        sg_equity: 0.15,
-        reits: 0.10,
-        gold: 0.05
-      });
-    }
-  };
-
-  const handleApplyMixAsCustom = (weights: Record<AssetClassKey, number>) => {
-    setCustomWeights({ ...weights });
-    setActiveChartMixId('custom');
-  };
-
   const handleDataLoadedFromCsv = (
     loadedPrices: PricePoint[],
     seriesName: string,
@@ -623,11 +457,7 @@ export default function App() {
   };
 
   // Determine active mix for the chart
-  const combinedMixes: MixAnalyticsState[] = [...mixStates];
-  if (customMixState) {
-    combinedMixes.push(customMixState);
-  }
-  const activeMixForChart = combinedMixes.find(m => m.mixId === activeChartMixId) || combinedMixes[0] || customMixState;
+  const activeMixForChart = mixStates.find(m => m.mixId === activeChartMixId) || mixStates[0];
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col antialiased">
@@ -650,7 +480,7 @@ export default function App() {
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 font-display">
               {viewMode === 'goal_allocation'
                 ? 'Singapore Goal-Based Asset Allocation Illustrator'
-                : 'ETF Horizon Single-Asset Analytics'}
+                : 'My Financial Guru Single-Asset Analytics'}
             </h1>
             <p className="text-xs sm:text-sm text-slate-600 mt-1">
               {viewMode === 'goal_allocation'
@@ -774,7 +604,6 @@ export default function App() {
                     mix={mix}
                     isActiveChart={activeChartMixId === mix.mixId}
                     onSelectActiveChart={() => setActiveChartMixId(mix.mixId)}
-                    onApplyAsCustom={() => handleApplyMixAsCustom(mix.weights)}
                     targetAmount={targetAmount}
                     currentMonthlyContribution={monthlyContribution}
                     currency={currency}
@@ -785,7 +614,7 @@ export default function App() {
               </div>
             </section>
 
-            {/* 4. Interactive Trajectory Projection Chart */}
+            {/* 3. Interactive Trajectory Projection Chart */}
             {activeMixForChart && (
               <GoalTrajectoryChart
                 activeMix={activeMixForChart}
@@ -793,37 +622,9 @@ export default function App() {
                 currency={currency}
                 isRealTerms={isRealTerms}
                 years={years}
-                availableMixes={combinedMixes}
+                availableMixes={mixStates}
                 onSelectMixId={setActiveChartMixId}
               />
-            )}
-
-            {/* 5. Custom Asset Allocation Builder */}
-            <CustomAllocationEditor
-              weights={customWeights}
-              onWeightChange={handleCustomWeightChange}
-              onNormalizeWeights={handleNormalizeCustomWeights}
-              configs={assetConfigs}
-              onApplyPresetWeights={handleApplyPresetWeights}
-              isSimulating={isLoading}
-              onRunSimulation={runGoalAnalyticsPipeline}
-            />
-
-            {/* Custom Mix Card if exists */}
-            {customMixState && (
-              <div className="pt-2">
-                <AllocationMixCard
-                  mix={customMixState}
-                  isActiveChart={activeChartMixId === 'custom'}
-                  onSelectActiveChart={() => setActiveChartMixId('custom')}
-                  onApplyAsCustom={() => {}}
-                  targetAmount={targetAmount}
-                  currentMonthlyContribution={monthlyContribution}
-                  currency={currency}
-                  isRealTerms={isRealTerms}
-                  years={years}
-                />
-              </div>
             )}
           </div>
         )}

@@ -20,7 +20,7 @@ export const Footer: React.FC = () => {
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-slate-500 font-mono text-[11px] pt-1">
           <div className="flex items-center gap-2">
             <ShieldCheck className="h-3.5 w-3.5 text-slate-500" />
-            <span>ETF Horizon · 6-Month Block Bootstrap Simulation · Stateless MCP Serverless Protocol</span>
+            <span>My Financial Guru · 6-Month Block Bootstrap Simulation · Stateless MCP Serverless Protocol</span>
           </div>
 
           <div className="flex items-center gap-4">

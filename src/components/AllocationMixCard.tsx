@@ -21,7 +21,7 @@ interface AllocationMixCardProps {
   mix: MixAnalyticsState;
   isActiveChart: boolean;
   onSelectActiveChart: () => void;
-  onApplyAsCustom: () => void;
+  onApplyAsCustom?: () => void;
   targetAmount: number;
   currentMonthlyContribution: number;
   currency: 'SGD' | 'USD';
@@ -295,14 +295,16 @@ export const AllocationMixCard: React.FC<AllocationMixCardProps> = ({
       </div>
 
       {/* Card Actions */}
-      <div className="p-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={onApplyAsCustom}
-          className="text-xs font-medium text-slate-600 hover:text-slate-900 px-2.5 py-1.5 rounded hover:bg-slate-100 transition-colors"
-        >
-          Customize Weights
-        </button>
+      <div className={`p-3 bg-slate-50 border-t border-slate-200 flex items-center ${onApplyAsCustom ? 'justify-between' : 'justify-end'} gap-2`}>
+        {onApplyAsCustom && (
+          <button
+            type="button"
+            onClick={onApplyAsCustom}
+            className="text-xs font-medium text-slate-600 hover:text-slate-900 px-2.5 py-1.5 rounded hover:bg-slate-100 transition-colors"
+          >
+            Customize Weights
+          </button>
+        )}
 
         <button
           type="button"
